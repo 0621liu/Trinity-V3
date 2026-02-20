@@ -17,7 +17,6 @@ CHAT_ID = "在此填入您的_CHAT_ID"
 @st.cache_data(ttl=300)
 def fetch_market_data():
     try:
-        # 抓取數據：0050 需要 120MA，2330 需要現價與均量
         df_0050 = yf.download("0050.TW", period="1y", interval="1d")
         df_2330 = yf.download("2330.TW", period="1mo", interval="1d")
         if df_0050.empty or df_2330.empty: return None
@@ -32,10 +31,8 @@ def fetch_market_data():
         ma20 = float(ma20_series.iloc[-1])
         ma20_prev = float(ma20_series.iloc[-2])
         ma120 = float(df_0050['Close'].rolling(120).mean().iloc[-1])
-        
         n20h = float(df_0050['High'].rolling(20).max().shift(1).iloc[-1])
         n10l = float(df_0050['Low'].rolling(10).min().shift(1).iloc[-1])
-        
         bias = ((close - ma20) / ma20) * 100
         
         v_curr = float(df_2330['Volume'].iloc[-1])
@@ -56,42 +53,54 @@ def fetch_market_data():
 # 🚀 執行主程序
 # ==========================================
 
-st.title("🎖️ Trinity V3.1 雲端指揮部")
-st.caption(f"最後更新：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+# --- 💰 左側側邊欄 (規格增裝) ---
+st.sidebar.title("💰 戰術配置室")
+capital = st.sidebar.number_input("總火種 (NTD)", value=30000, min_value=1000, step=10000)
+entry_price = st.sidebar.number_input("第一梯隊進場價", value=0.0, step=0.1)
 
 data = fetch_market_data()
 
-# --- 💰 左側側邊欄 (此次改動重點) ---
-st.sidebar.title("💰 戰術配置室")
-capital = st.sidebar.number_input("總火種 (NTD)", value=1000000, min_value=1000, step=100000)
-entry_price = st.sidebar.number_input("第一梯隊進場價", value=0.0, step=0.1)
-
 if data:
-    # 槓桿保證金自動換算邏輯
-    contract_value = data['price'] * 1000
-    # 3.5倍槓桿保證金 (合約總值/3.5)
-    margin_35x = max(4200, contract_value / 3.5)
-    # 6.0倍槓桿保證金 (合約總值/6)
-    margin_60x = max(4200, contract_value / 6.0)
-
-    st.sidebar.divider()
-    st.sidebar.subheader("📊 槓桿保證金試算")
-    st.sidebar.markdown(f"**0050 每口總值:** `{contract_value:,.0f}`")
-    st.sidebar.write(f"🔹 **3.5x 槓桿需:** `{margin_35x:,.0f}` 元")
-    st.sidebar.write(f"🔹 **6.0x 槓桿需:** `{margin_60x:,.0f}` 元")
-    st.sidebar.caption("*(基準: 小0050期, 原始保證金 4200)*")
-
-# ==========================================
-# 📈 右側主畫面 (嚴格禁止改動)
-# ==========================================
-if data:
-    # 1. 兵力拆分
+    # 1. 兵力拆分邏輯 (背景計算)
     c_val = data['price'] * 1000
-    cap_split = capital * 0.5
-    pos_35x = math.floor((cap_split * 3.5) / c_val)
-    pos_60x = math.floor((cap_split * 6.0) / c_val)
+    if capital < 100000:
+        pos_35x = math.floor((capital * 6.0) / c_val) # 第一階段 6.0x
+        pos_60x = 0
+    else:
+        cap_split = capital * 0.5
+        pos_35x = math.floor((cap_split * 3.5) / c_val)
+        pos_60x = math.floor((cap_split * 6.0) / c_val)
+    
     total_pos = pos_35x + pos_60x
 
+    # --- 💎 新增：剩餘保證金換算 (放在進場價下面) ---
+    used_margin = pos_35x * 4200
+    remaining_margin = capital - used_margin
+    
+    st.sidebar.markdown(f"""
+    <div style="background-color:#262730; padding:10px; border-radius:5px; border:1px solid #464b5d;">
+        <p style="color:#808495; font-size:12px; margin-bottom:5px;">第一梯隊佔用保證金 (4200/口)</p>
+        <p style="color:#ffffff; font-size:18px; font-weight:bold; margin-bottom:10px;">{used_margin:,.0f} 元</p>
+        <p style="color:#808495; font-size:12px; margin-bottom:5px;">🟢 剩餘保證金</p>
+        <p style="color:#00FF00; font-size:22px; font-weight:bold;">{remaining_margin:,.0f} 元</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 槓桿試算 (保留前次功能)
+    contract_value = data['price'] * 1000
+    margin_35x_req = max(4200, contract_value / 3.5)
+    margin_60x_req = max(4200, contract_value / 6.0)
+    st.sidebar.divider()
+    st.sidebar.caption(f"當前每口總值: {contract_value:,.0f}")
+    st.sidebar.caption(f"3.5x 需: {margin_35x_req:,.0f} | 6.0x 需: {margin_60x_req:,.0f}")
+
+# ==========================================
+# 📈 右側主畫面 (嚴格鎖定，禁止改動)
+# ==========================================
+st.title("🎖️ Trinity V3.1 雲端指揮部")
+st.caption(f"最後更新：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+if data:
     # 2. 判定邏輯
     is_ma20_up = data['ma20'] > data['ma20_prev']
     is_climax_16 = data['v_ratio'] > 1.6
@@ -112,7 +121,7 @@ if data:
         if is_climax_16:
             sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量護盤", "warning"
         elif data['v_ratio'] > 1.2:
-            sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {total_pos} 口空單 ({pos_35x}+{pos_60x})", "error"
+            sig, act, color = "💣 ATTACK 空單突擊", f"反手建立空單 ({pos_35x}+{pos_60x})", "error"
 
     if data['price'] < data['ma20']:
         sig, act, color, icon = "🛑 RETREAT 撤退", "跌破 20MA，不論盈虧全軍撤退！", "error", "🚨🚨🚨"
@@ -150,7 +159,7 @@ if data:
 
     if st.button("🚀 請求發報：同步至手機"):
         async def send_tg():
-            msg = f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n動作：{act}"
+            msg = f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n成本：{entry_price:.2f}\n剩餘保證金：{remaining_margin:,.0f}"
             bot = Bot(token=TOKEN)
             await bot.send_message(chat_id=CHAT_ID, text=msg)
         loop = asyncio.new_event_loop()
