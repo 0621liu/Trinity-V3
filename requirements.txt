@@ -1,6 +1,7 @@
-streamlit>=1.30.0
-yfinance
+yfinance>=0.2.36
 pandas
 python-telegram-bot
+curl_cffi
 requests
 protobuf==3.20.3
+streamlit>=1.30.0
