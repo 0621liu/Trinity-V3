@@ -123,4 +123,6 @@ async def send_command_center_report():
     await bot.send_message(chat_id=CHAT_ID, text=report)
 
 if __name__ == "__main__":
-    print("🚀 Trinity V3.1 指揮部
+    print("🚀 Trinity V3.1 指揮部正式啟動...")
+    asyncio.run(send_command_center_report())
+
