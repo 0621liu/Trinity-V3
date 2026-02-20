@@ -21,9 +21,9 @@ COMMAND_PASSWORD = "在此設定您的指揮官密碼"
 def check_password():
     if "password_correct" not in st.session_state:
         st.title("🎖️ Trinity 系統：身份驗證")
-        pwd = st.text_input("2836", type="password")
+        pwd = st.text_input("請輸入授權密碼", type="password")
         if st.button("登入系統"):
-            if pwd == COMMAND_PASSWORD:
+            if pwd == COMMAND_PASSWORD:2836
                 st.session_state["password_correct"] = True
                 if hasattr(st, "rerun"): st.rerun()
                 else: st.experimental_rerun()
