@@ -1,3 +1,4 @@
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import asyncio
@@ -5,124 +6,138 @@ from telegram import Bot
 from datetime import datetime
 
 # ==========================================
-# 🎖️ 指揮部核心配置
+# 🎖️ 指揮部核心配置 (請填寫您的資訊)
 # ==========================================
 TOKEN = "8137685110:AAFkDozi-FKMrLYJTcbxwb5Q8ishmJDm_u8"
 CHAT_ID = "在此填入您的_CHAT_ID"  # 找 @userinfobot 取得
 
-SYMBOL_MAIN = "0050.TW"
-SYMBOL_TSMC = "2330.TW"
+# ==========================================
+# 📊 數據引擎 (具備快取機制，避免被封鎖)
+# ==========================================
+@st.cache_data(ttl=900)  # 每 15 分鐘刷新一次數據
+def fetch_market_data():
+    try:
+        # 抓取 0050 (趨勢) 與 2330 (動能)
+        df_0050 = yf.download("0050.TW", period="9mo", interval="1d")
+        df_2330 = yf.download("2330.TW", period="1mo", interval="1d")
+        
+        if df_0050.empty or df_tsmc.empty: return None
+
+        # 1. 0050 價格指標
+        close = df_0050['Close'].iloc[-1]
+        ma20 = df_0050['Close'].rolling(20).mean().iloc[-1]
+        ma120 = df_0050['Close'].rolling(120).mean().iloc[-1]
+        n20h = df_0050['High'].rolling(20).max().shift(1).iloc[-1]
+        n10l = df_0050['Low'].rolling(10).min().shift(1).iloc[-1]
+        bias = ((close - ma20) / ma20) * 100
+
+        # 2. 2330 量能指標 (1.2x 進場, 1.6x 空頭熔斷)
+        v_curr = df_2330['Volume'].iloc[-1]
+        v5ma = df_2330['Volume'].rolling(5).mean().iloc[-1]
+        v_ratio = v_curr / v5ma
+
+        return {
+            "price": close, "ma20": ma20, "ma120": ma120,
+            "n20h": n20h, "n10l": n10l, "bias": bias,
+            "v_ratio": v_ratio, "v5ma": v5ma, "v_curr": v_curr
+        }
+    except Exception as e:
+        st.error(f"數據抓取失敗：{e}")
+        return None
 
 # ==========================================
-# 📊 數據抓取與指標計算
+# ⚡ 戰術分析邏輯
 # ==========================================
-def get_signals():
-    # 抓取 0050 與 台積電 數據
-    df_0050 = yf.download(SYMBOL_MAIN, period="8mo", interval="1d")
-    df_tsmc = yf.download(SYMBOL_TSMC, period="1mo", interval="1d")
+def run_analysis(s):
+    sig = "💤 靜默"
+    act = "指標未達成共識，保持觀望"
+    status_color = "info"
     
-    # 確保數據不為空
-    if df_0050.empty or df_tsmc.empty: return None
-
-    # --- 0050 指標計算 ---
-    close = df_0050['Close'].iloc[-1]
-    ma20 = df_0050['Close'].rolling(20).mean().iloc[-1]
-    ma120 = df_0050['Close'].rolling(120).mean().iloc[-1]
-    n20_h = df_0050['High'].rolling(20).max().shift(1).iloc[-1]
-    n10_l = df_0050['Low'].rolling(10).min().shift(1).iloc[-1]
-    bias_20 = ((close - ma20) / ma20) * 100
-
-    # --- 台積電量能計算 ---
-    v_curr = df_tsmc['Volume'].iloc[-1]
-    v5ma = df_tsmc['Volume'].rolling(5).mean().iloc[-1]
-    v_ratio = v_curr / v5ma
-
-    return {
-        "price": close, "ma20": ma20, "ma120": ma120,
-        "n20h": n20_h, "n10l": n10_l, "bias": bias_20,
-        "v_ratio": v_ratio, "v_curr": v_curr
-    }
-
-# ==========================================
-# ⚡ 戰術判定引擎 (V3.1 校準版)
-# ==========================================
-def analyze_tactics(s):
-    signal = "💤 靜默"
-    action = "保持觀望，等待時機"
-    alert_level = "INFO"
-
-    # --- 1.6 倍量能熔斷 (僅限空頭) ---
     is_climax_16 = s['v_ratio'] > 1.6
-    
-    # --- 多頭判定 (Long) ---
-    # 條件：>20MA 且 >=N20_H 且 量比>1.2 且 乖離<=5.5%
+
+    # --- 多頭判斷 (Long) ---
     if s['price'] > s['ma20'] and s['price'] >= s['n20h']:
         if s['v_ratio'] > 1.2 and s['bias'] <= 5.5:
-            signal = "🔥 FIRE 多單點火"
-            action = "建立 2 口小 0050 期 (3.5x 槓桿)\n若獲利 >2% 再加碼至 3 口 (6.0x)"
-            alert_level = "SUCCESS"
+            sig, act, status_color = "🔥 FIRE 多單點火", "買進 2 口小 0050 期 (3.5x)\n獲利 >2% 加碼至 3 口 (6.0x)", "success"
         elif s['bias'] > 5.5:
-            signal = "⚠️ 乖離過高"
-            action = "等待拉回月線，禁止追高進場"
+            sig, act = "⚠️ 乖離過高", "等待回踩月線，禁止追高"
 
-    # --- 空頭判定 (Short) ---
-    # 條件：<20MA 且 <120MA 且 <=N10_L 且 量比>1.2 且 非1.6倍爆量
+    # --- 空頭判斷 (Short) ---
     elif s['price'] < s['ma20'] and s['price'] < s['ma120'] and s['price'] <= s['n10l']:
         if is_climax_16:
-            signal = "🚫 禁止放空"
-            action = "台積電量能爆表 (1.6x)，疑有竭盡性拋售或護盤，嚴禁追空！"
+            sig, act, status_color = "🚫 禁止放空", "台積電 1.6x 爆量，疑有護盤，禁止追空", "warning"
         elif s['v_ratio'] > 1.2:
-            signal = "💣 ATTACK 空單突擊"
-            action = "建立 2 口小 0050 期 (反手空頭 3.5x)"
-            alert_level = "WARNING"
+            sig, act, status_color = "💣 ATTACK 空單突擊", "反手點火空單 (3.5x)", "error"
 
-    # --- 出場判定 ---
-    # 多單出場：破 20MA
+    # --- 出場邏輯 ---
     if s['price'] < s['ma20']:
-        signal = "🛑 RETREAT 多單撤退"
-        action = "收盤破 20MA，全軍平倉，保護本金！"
-        alert_level = "CRITICAL"
+        sig, act, status_color = "🛑 RETREAT 多單撤退", "跌破 20MA，多單全數平倉", "error"
     
-    # 空單出場額外條件：1.6 倍爆量無條件出場
-    if is_climax_16:
-        signal = "🏳️ 空單撤退 (1.6x 熔斷)"
-        action = "台積電放量 1.6 倍，空單立即無條件平倉獲利落袋！"
-        alert_level = "CRITICAL"
+    if is_climax_16: # 針對空頭的 1.6x 無條件出場
+        # 注意：此處邏輯假設若首長持有空單則觸發
+        sig = sig + " | 🏳️ 空單熔斷"
+        act = act + "\n【緊急】空頭遭遇 1.6x 爆量，空單無條件平倉！"
 
-    return signal, action, alert_level
+    return sig, act, status_color
 
 # ==========================================
-# 📡 Telegram 通訊模組
+# 🌐 Streamlit UI 介面
 # ==========================================
-async def send_command_center_report():
-    data = get_signals()
-    if not data: return
-    
-    sig, act, lvl = analyze_tactics(data)
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    report = (
-        f"🎖️ Trinity V3.1 雲端指揮部\n"
-        f"⏰ 報時：{now}\n"
-        f"----------------------------\n"
-        f"【當前狀態】：{sig}\n"
-        f"【戰術動作】：{act}\n"
-        f"----------------------------\n"
-        f"📍 0050 價位：{data['price']:.2f}\n"
-        f"📉 20MA 位階：{data['ma20']:.2f}\n"
-        f"🏰 半年線位：{data['ma120']:.2f}\n"
-        f"📈 20日高點：{data['n20h']:.2f}\n"
-        f"📊 2330 量比：{data['v_ratio']:.2f}x\n"
-        f"⚠️ 乖離率：{data['bias']:.2f}%\n"
-        f"----------------------------\n"
-        f"副官小佛提醒：邊走邊看，紀律點火。"
-    )
-    
-    print(f"[{now}] 掃描完成，目前狀態: {sig}")
-    bot = Bot(token=TOKEN)
-    await bot.send_message(chat_id=CHAT_ID, text=report)
+st.set_page_config(page_title="Trinity V3.1 指揮部", layout="wide")
+st.title("🎖️ Trinity V3.1 雲端指揮部")
+st.caption(f"當前時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (市場數據每 15 分鐘刷新)")
 
-if __name__ == "__main__":
-    print("🚀 Trinity V3.1 指揮部正式啟動...")
-    asyncio.run(send_command_center_report())
+data = fetch_market_data()
 
+if data:
+    sig, act, color = run_analysis(data)
+
+    # 儀表板
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("0050 目前價", f"{data['price']:.2f}")
+    c2.metric("2330 量能比", f"{data['v_ratio']:.2f}x")
+    c3.metric("20MA 乖離", f"{data['bias']:.2f}%")
+    c4.metric("20日高點位", f"{data['n20h']:.2f}")
+
+    st.divider()
+
+    # 戰術顯示
+    if color == "success": st.success(f"### 指令：{sig}")
+    elif color == "warning": st.warning(f"### 指令：{sig}")
+    elif color == "error": st.error(f"### 指令：{sig}")
+    else: st.info(f"### 指令：{sig}")
+
+    st.write(f"**戰術動作：**\n{act}")
+
+    # ==========================================
+    # 📢 手動通訊區 (靜默模式)
+    # ==========================================
+    st.divider()
+    st.subheader("📢 戰訊發送控制")
+    st.write("目前處於「靜默模式」，點擊下方按鈕才會向您的 Telegram 發送報告。")
+    
+    if st.button("🚀 請求戰報：同步至手機 Telegram"):
+        async def send_msg():
+            report = (
+                f"🎖️ Trinity 戰情回報\n"
+                f"--------------------\n"
+                f"指令：{sig}\n"
+                f"價位：{data['price']:.2f}\n"
+                f"量比：{data['v_ratio']:.2f}x\n"
+                f"動作：{act}\n"
+                f"--------------------\n"
+                f"時間：{datetime.now().strftime('%H:%M')}"
+            )
+            bot = Bot(token=TOKEN)
+            await bot.send_message(chat_id=CHAT_ID, text=report)
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(send_msg())
+            st.success("✅ 戰報已送達統帥手機！")
+        except Exception as e:
+            st.error(f"通訊失敗：{e}")
+
+else:
+    st.warning("⚠️ 數據連線中，請稍候或重新整理頁面...")
