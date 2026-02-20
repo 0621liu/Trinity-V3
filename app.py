@@ -22,7 +22,6 @@ def fetch_market_data():
     try:
         df_0050 = yf.download("0050.TW", period="9mo", interval="1d")
         df_2330 = yf.download("2330.TW", period="1mo", interval="1d")
-        
         if df_0050.empty or df_2330.empty: return None
 
         # 解決 MultiIndex 扁平化
@@ -60,7 +59,7 @@ def fetch_market_data():
 # --- 💰 側邊欄控制區 ---
 st.sidebar.title("💰 戰術配置室")
 capital = st.sidebar.number_input("總火種 (NTD)", value=1000000, min_value=1000, step=100000)
-entry_price = st.sidebar.number_input("第一梯隊進場價 (若無則填0)", value=0.0, step=0.1)
+entry_price = st.sidebar.number_input("第一梯隊進場價 (若無填0)", value=0.0, step=0.1)
 
 st.title("🎖️ Trinity V3.1 雲端指揮部")
 st.caption(f"偵查頻率：5 分鐘 | 現在時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -69,13 +68,13 @@ data = fetch_market_data()
 
 if data:
     # 1. 兵力拆分 (50/50 戰法)
-    contract_val = data['price'] * 1000
+    c_val = data['price'] * 1000
     cap_split = capital * 0.5
-    pos_35x = math.floor((cap_split * 3.5) / contract_val)
-    pos_60x = math.floor((cap_split * 6.0) / contract_val)
+    pos_35x = math.floor((cap_split * 3.5) / c_val)
+    pos_60x = math.floor((cap_split * 6.0) / c_val)
     total_pos = pos_35x + pos_60x
 
-    # 2. 趨勢與加碼判定
+    # 2. 趨勢判定
     is_ma20_down = data['ma20'] < data['ma20_prev']
     is_ma20_up = data['ma20'] > data['ma20_prev']
     is_climax_16 = data['v_ratio'] > 1.6
@@ -84,66 +83,77 @@ if data:
     is_addon_reached = data['price'] >= target_addon if target_addon > 0 else False
 
     # 3. 戰術指令判定
-    sig, act, color, alert_icon = "💤 靜默", "等待指標共振", "info", ""
+    sig, act, color, icon = "💤 靜默", "等待指標共振", "info", ""
 
-    # 多頭核心 (價格>MA20 且 突破20日高點)
+    # 多頭：價格 > 20MA 且 突破 20日高點
     if data['price'] > data['ma20'] and data['price'] >= data['n20h']:
         if data['v_ratio'] > 1.2 and data['bias'] <= 5.5:
             sig, color = "🔥 FIRE 多單點火", "success"
-            act = f"建議進場第一梯隊 {pos_35x} 口" if entry_price == 0 else f"第一梯隊 {pos_35x} 口已在陣中"
+            act = f"進場第一梯隊 {pos_35x} 口" if entry_price == 0 else f"第一梯隊已在陣中"
             if is_addon_reached:
-                sig = "🚀 FIRE 全力進攻"
-                act = f"已達加碼點 {target_addon:.2f}，投入剩餘 {pos_60x} 口"
+                sig, act = "🚀 FIRE 全力進攻", f"達加碼點 {target_addon:.2f}，補進剩餘 {pos_60x} 口"
         elif data['bias'] > 5.5:
-            sig, act, color = "⚠️ 乖離過熱", "禁止追多，等待回踩月線", "warning"
+            sig, act, color = "⚠️ 乖離過熱", "禁止追多，等待回踩", "warning"
     
-    # 空頭核心 (價格<MA20 且 <MA120 且 破10日低 且 月線下彎)
+    # 空頭：價格 < 20MA 且 < 120MA 且 破10日低 且 月線下彎
     elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
         if is_climax_16:
-            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量避險中", "warning"
+            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量護盤中", "warning"
         elif is_ma20_down and data['v_ratio'] > 1.2:
-            sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {total_pos} 口空單 (分兩批: {pos_35x}+{pos_60x})", "error"
+            sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {total_pos} 口空單 ({pos_35x}+{pos_60x})", "error"
         elif not is_ma20_down:
             sig, act = "⏳ 等待下彎", "價格破位但月線斜率未轉負"
 
-    # 同步撤退機制 (只要破20MA不論多空全撤)
+    # 同步撤退機制 (不論多空，跌破 20MA 全撤)
     if data['price'] < data['ma20']:
-        sig, act, color, alert_icon = "🛑 RETREAT 撤退", "跌破 20MA，全軍同步清倉！", "error", "🚨"
+        sig, act, color, icon = "🛑 RETREAT 撤退", "跌破 20MA，全軍同步清倉！", "error", "🚨"
     
-    # 台積電熔斷
     if is_climax_16:
-        sig = "🏳️ 空單熔斷 | 撤退"
+        sig, icon = "🏳️ 空單熔斷 | 撤退", "🚨"
         act += "\n【警報】1.6x 爆量，不論多空立即撤退！"
-        color, alert_icon = "error", "🚨"
+        color = "error"
 
     # 4. 戰情儀表板佈局
     c1, c2, c3, c4 = st.columns(4)
-    
     with c1:
         st.metric("0050 目前價", f"{data['price']:.2f}")
         if entry_price > 0:
             st.caption(f"成本: {entry_price:.2f} | 加碼: {target_addon:.2f}")
         else:
             st.caption("成本: 未設定")
-
     with c2:
         st.metric("建議總口數", f"{total_pos}")
         st.caption(f"3.5x:{pos_35x} | 6x:{pos_60x} | {capital/10000:.0f}萬")
-    
     with c3:
-        v_total_str = f"{data['v_curr'] / 1000:,.0f} K"
-        st.metric("台積電量比", f"{data['v_ratio']:.2f}x", f"總量: {v_total_str}")
-    
+        v_total = f"{data['v_curr'] / 1000:,.0f} K"
+        st.metric("台積電量比", f"{data['v_ratio']:.2f}x", f"總量: {v_total}")
     with c4:
-        # 乖離率顏色邏輯
-        bias_color = "red" if data['bias'] > 5.5 else ("#00FF00" if data['bias'] < -5.5 else "white")
+        b_clr = "red" if data['bias'] > 5.5 else ("#00FF00" if data['bias'] < -5.5 else "white")
         st.write(f"月線: {data['ma20']:.2f} ({'⤴️' if is_ma20_up else '⤵️'})")
-        st.markdown(f"乖離率: <span style='color:{bias_color}; font-weight:bold;'>{data['bias']:.2f}%</span>", unsafe_content_type=True)
+        st.markdown(f"乖離率: <span style='color:{b_clr}; font-weight:bold;'>{data['bias']:.2f}%</span>", unsafe_content_type=True)
 
     st.divider()
     
     # 指令顯示區
-    display_sig = f"{alert_icon} {sig} {alert_icon}" if alert_icon else sig
-    if color == "success": st.success(f"### 指令：{display_sig}")
-    elif color == "warning": st.warning(f"### 指令：{display_sig}")
-    elif color == "error": st.error(f"### 指令：
+    d_sig = f"{icon} {sig} {icon}" if icon else sig
+    if color == "success": st.success(f"### 指令：{d_sig}")
+    elif color == "warning": st.warning(f"### 指令：{d_sig}")
+    elif color == "error": st.error(f"### 指令：{d_sig}")
+    else: st.info(f"### 指令：{d_sig}")
+    st.write(f"**建議動作：**\n{act}")
+
+    # 5. 手動發報
+    if st.button("🚀 請求發報：同步至手機"):
+        async def send_tg():
+            msg = f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n成本：{entry_price:.2f}\n加碼點：{target_addon:.2f}\n口數：{total_pos} ({pos_35x}+{pos_60x})\n動作：{act}"
+            bot = Bot(token=TOKEN)
+            await bot.send_message(chat_id=CHAT_ID, text=msg)
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(send_tg())
+            st.success("✅ 戰報已送達！")
+        except Exception as e:
+            st.error(f"發送失敗：{e}")
+else:
+    st.warning("📡 偵查雷達重啟中...")
