@@ -1,78 +1,126 @@
-import streamlit as st
 import yfinance as yf
 import pandas as pd
+import asyncio
+from telegram import Bot
+from datetime import datetime
 
-# --- 1. 權限驗證系統 ---
-st.set_page_config(page_title="Trinity V3.2 密鑰指揮部", layout="wide")
+# ==========================================
+# 🎖️ 指揮部核心配置
+# ==========================================
+TOKEN = "8137685110:AAFkDozi-FKMrLYJTcbxwb5Q8ishmJDm_u8"
+CHAT_ID = "在此填入您的_CHAT_ID"  # 找 @userinfobot 取得
 
-# 這裡設定您的專屬密碼 (建議修改下方的 "1234")
-MASTER_KEY = "2836" 
+SYMBOL_MAIN = "0050.TW"
+SYMBOL_TSMC = "2330.TW"
 
-st.sidebar.title("🔐 安全驗證")
-user_pwd = st.sidebar.text_input("輸入統帥授權碼", type="password")
+# ==========================================
+# 📊 數據抓取與指標計算
+# ==========================================
+def get_signals():
+    # 抓取 0050 與 台積電 數據
+    df_0050 = yf.download(SYMBOL_MAIN, period="8mo", interval="1d")
+    df_tsmc = yf.download(SYMBOL_TSMC, period="1mo", interval="1d")
+    
+    # 確保數據不為空
+    if df_0050.empty or df_tsmc.empty: return None
 
-if user_pwd != MASTER_KEY:
-    st.title("🎖️ Trinity V3.2 雲端指揮部")
-    st.warning("⚠️ 系統已鎖定。請於左側側邊欄輸入『統帥授權碼』以解除屏蔽。")
-    st.info("副官提醒：未經授權禁止訪問戰略數據。")
-    st.stop() # 密碼錯誤就直接切斷後續運算，保護數據
+    # --- 0050 指標計算 ---
+    close = df_0050['Close'].iloc[-1]
+    ma20 = df_0050['Close'].rolling(20).mean().iloc[-1]
+    ma120 = df_0050['Close'].rolling(120).mean().iloc[-1]
+    n20_h = df_0050['High'].rolling(20).max().shift(1).iloc[-1]
+    n10_l = df_0050['Low'].rolling(10).min().shift(1).iloc[-1]
+    bias_20 = ((close - ma20) / ma20) * 100
 
-# --- 2. 核心邏輯 (驗證通過後才會執行) ---
-st.title("🎖️ Trinity V3.2 雲端指揮部 [已授權]")
+    # --- 台積電量能計算 ---
+    v_curr = df_tsmc['Volume'].iloc[-1]
+    v5ma = df_tsmc['Volume'].rolling(5).mean().iloc[-1]
+    v_ratio = v_curr / v5ma
 
-@st.cache_data(ttl=600)
-def fetch_market_data():
-    try:
-        d050 = yf.download("0050.TW", period="1mo", auto_adjust=True, progress=False)
-        d2330 = yf.download("2330.TW", period="1mo", auto_adjust=True, progress=False)
-        
-        if d050.empty or d2330.empty:
-            return "數據真空，請稍後再試。"
+    return {
+        "price": close, "ma20": ma20, "ma120": ma120,
+        "n20h": n20_h, "n10l": n10_l, "bias": bias_20,
+        "v_ratio": v_ratio, "v_curr": v_curr
+    }
 
-        if isinstance(d050.columns, pd.MultiIndex):
-            d050.columns = d050.columns.get_level_values(0)
-        if isinstance(d2330.columns, pd.MultiIndex):
-            d2330.columns = d2330.columns.get_level_values(0)
-            
-        p = float(d050['Close'].dropna().iloc[-1])
-        m20 = float(d050['Close'].dropna().rolling(20).mean().iloc[-1])
-        nh = float(d050['High'].dropna().rolling(20).max().shift(1).iloc[-1])
-        v5ma = float(d2330['Volume'].dropna().tail(5).mean())
-        curr_v = float(d2330['Volume'].dropna().iloc[-1])
-        vr = curr_v / v5ma if v5ma > 0 else 0
-        bias = ((p - m20) / m20) * 100
-        
-        return {"p": p, "m20": m20, "nh": nh, "vr": vr, "bias": bias}
-    except Exception as e:
-        return f"異常：{str(e)}"
+# ==========================================
+# ⚡ 戰術判定引擎 (V3.1 校準版)
+# ==========================================
+def analyze_tactics(s):
+    signal = "💤 靜默"
+    action = "保持觀望，等待時機"
+    alert_level = "INFO"
 
-# --- 3. 介面渲染 ---
-st.sidebar.markdown("---")
-capital = st.sidebar.number_input("當前總資產 (TWD)", value=30000, step=1000)
+    # --- 1.6 倍量能熔斷 (僅限空頭) ---
+    is_climax_16 = s['v_ratio'] > 1.6
+    
+    # --- 多頭判定 (Long) ---
+    # 條件：>20MA 且 >=N20_H 且 量比>1.2 且 乖離<=5.5%
+    if s['price'] > s['ma20'] and s['price'] >= s['n20h']:
+        if s['v_ratio'] > 1.2 and s['bias'] <= 5.5:
+            signal = "🔥 FIRE 多單點火"
+            action = "建立 2 口小 0050 期 (3.5x 槓桿)\n若獲利 >2% 再加碼至 3 口 (6.0x)"
+            alert_level = "SUCCESS"
+        elif s['bias'] > 5.5:
+            signal = "⚠️ 乖離過高"
+            action = "等待拉回月線，禁止追高進場"
 
-res = fetch_market_data()
+    # --- 空頭判定 (Short) ---
+    # 條件：<20MA 且 <120MA 且 <=N10_L 且 量比>1.2 且 非1.6倍爆量
+    elif s['price'] < s['ma20'] and s['price'] < s['ma120'] and s['price'] <= s['n10l']:
+        if is_climax_16:
+            signal = "🚫 禁止放空"
+            action = "台積電量能爆表 (1.6x)，疑有竭盡性拋售或護盤，嚴禁追空！"
+        elif s['v_ratio'] > 1.2:
+            signal = "💣 ATTACK 空單突擊"
+            action = "建立 2 口小 0050 期 (反手空頭 3.5x)"
+            alert_level = "WARNING"
 
-if isinstance(res, dict):
-    c1, c2, c3 = st.columns(3)
-    c1.metric("0050 現價", f"{res['p']:.2f}", f"{res['p']-res['m20']:.2f}")
-    c2.metric("2330 量能比", f"{res['vr']:.2f}x", "門檻 1.20x")
-    c3.metric("乖離率", f"{res['bias']:.1f}%", "上限 5.5%")
+    # --- 出場判定 ---
+    # 多單出場：破 20MA
+    if s['price'] < s['ma20']:
+        signal = "🛑 RETREAT 多單撤退"
+        action = "收盤破 20MA，全軍平倉，保護本金！"
+        alert_level = "CRITICAL"
+    
+    # 空單出場額外條件：1.6 倍爆量無條件出場
+    if is_climax_16:
+        signal = "🏳️ 空單撤退 (1.6x 熔斷)"
+        action = "台積電放量 1.6 倍，空單立即無條件平倉獲利落袋！"
+        alert_level = "CRITICAL"
 
-    is_trend = res['p'] > res['m20'] and res['p'] >= res['nh']
-    is_vol = res['vr'] >= 1.2
-    is_safe = res['bias'] <= 5.5
+    return signal, action, alert_level
 
-    st.markdown("---")
-    if is_trend and is_vol and is_safe:
-        st.success("🔥 [FIRE] 符合 V3.1 點火條件！")
-    elif res['p'] < res['m20']:
-        st.error("🛑 [RETREAT] 價格破月線，撤退。")
-    else:
-        st.warning("💤 [WAIT] 指標未全亮，保持靜默。")
+# ==========================================
+# 📡 Telegram 通訊模組
+# ==========================================
+async def send_command_center_report():
+    data = get_signals()
+    if not data: return
+    
+    sig, act, lvl = analyze_tactics(data)
+    
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    report = (
+        f"🎖️ Trinity V3.1 雲端指揮部\n"
+        f"⏰ 報時：{now}\n"
+        f"----------------------------\n"
+        f"【當前狀態】：{sig}\n"
+        f"【戰術動作】：{act}\n"
+        f"----------------------------\n"
+        f"📍 0050 價位：{data['price']:.2f}\n"
+        f"📉 20MA 位階：{data['ma20']:.2f}\n"
+        f"🏰 半年線位：{data['ma120']:.2f}\n"
+        f"📈 20日高點：{data['n20h']:.2f}\n"
+        f"📊 2330 量比：{data['v_ratio']:.2f}x\n"
+        f"⚠️ 乖離率：{data['bias']:.2f}%\n"
+        f"----------------------------\n"
+        f"副官小佛提醒：邊走邊看，紀律點火。"
+    )
+    
+    print(f"[{now}] 掃描完成，目前狀態: {sig}")
+    bot = Bot(token=TOKEN)
+    await bot.send_message(chat_id=CHAT_ID, text=report)
 
-    lev = 6.0 if capital < 100000 else (3.5 if capital >= 3000000 else 4.75)
-    lots = (capital * lev) / (res['p'] * 1000)
-    st.subheader(f"⚔️ 彈藥建議 (槓桿: {lev}x)")
-    st.write(f"當前建議持有: **{round(lots, 1)} 口**")
-else:
-    st.error(res)
+if __name__ == "__main__":
+    print("🚀 Trinity V3.1 指揮部
