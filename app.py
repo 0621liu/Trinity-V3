@@ -4,79 +4,92 @@ import pandas as pd
 import asyncio
 from telegram import Bot
 from datetime import datetime
-import requests # 👈 新增補給
+import requests
 
 # ==========================================
-# 🎖️ 指揮部核心配置
+# 🎖️ 指揮部最高配置 (請在此修改您的私人資訊)
 # ==========================================
 TOKEN = "8137685110:AAFkDozi-FKMrLYJTcbxwb5Q8ishmJDm_u8"
-CHAT_ID = "在此填入您的_CHAT_ID"  
-COMMAND_PASSWORD = "2836" 
+CHAT_ID = "在此填入您的_CHAT_ID"  # 找 @userinfobot 取得數字 ID
+COMMAND_PASSWORD = "2836" # 👈 登入網頁用
 
-# --- 密碼驗證邏輯 ---
+# ==========================================
+# 🛡️ 安全驗證模組
+# ==========================================
 def check_password():
     if "password_correct" not in st.session_state:
         st.title("🎖️ Trinity 系統：身份驗證")
+        st.caption("本系統受加密保護，非授權統帥禁止進入。")
         pwd = st.text_input("2836", type="password")
         if st.button("核對身分"):
             if pwd == COMMAND_PASSWORD:
                 st.session_state["password_correct"] = True
                 st.rerun()
             else:
-                st.error("❌ 密碼錯誤")
+                st.error("❌ 密碼錯誤，拒絕訪問。")
         return False
     return True
 
-if check_password():
-    # ==========================================
-    # 📊 數據引擎 (強化偽裝版)
-    # ==========================================
-    @st.cache_data(ttl=300) 
-    def fetch_market_data():
-        try:
-            # 🕵️ 幽靈偽裝設定
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
-            }
-            session = requests.Session()
-            session.headers.update(headers)
+# ==========================================
+# 📊 數據偵查引擎 (5分鐘刷新 + 偽裝網)
+# ==========================================
+@st.cache_data(ttl=300)
+def fetch_market_data():
+    try:
+        # 使用 Session 偽裝成一般瀏覽器，避免被 Yahoo 封鎖
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0 Safari/537.36'}
+        session = requests.Session()
+        session.headers.update(headers)
 
-            # 抓取數據並帶入 session
-            df_0050 = yf.download("0050.TW", period="9mo", interval="1d", session=session)
-            df_2330 = yf.download("2330.TW", period="1mo", interval="1d", session=session)
-            
-            if df_0050.empty or df_2330.empty:
-                st.warning("📡 雅虎防線冷卻中，請 5 分鐘後再試...")
-                return None
-
-            # 指標計算
-            close = df_0050['Close'].iloc[-1]
-            ma20 = df_0050['Close'].rolling(20).mean().iloc[-1]
-            ma120 = df_0050['Close'].rolling(120).mean().iloc[-1]
-            n20h = df_0050['High'].rolling(20).max().shift(1).iloc[-1]
-            n10l = df_0050['Low'].rolling(10).min().shift(1).iloc[-1]
-            v_ratio = df_2330['Volume'].iloc[-1] / df_2330['Volume'].rolling(5).mean().iloc[-1]
-            bias = ((close - ma20) / ma20) * 100
-
-            return {"price": close, "ma20": ma20, "ma120": ma120, "n20h": n20h, "n10l": n10l, "v_ratio": v_ratio, "bias": bias}
-        except Exception as e:
-            st.error(f"⚠️ 偵查受阻：{e}")
-            return None
-
-    # ==========================================
-    # 🌐 UI 介面
-    # ==========================================
-    st.set_page_config(page_title="Trinity V3.1 指揮部", layout="wide")
-    st.title("🎖️ Trinity V3.1 雲端指揮部")
-    st.caption(f"數據頻率：5 分鐘 | 現在時間：{datetime.now().strftime('%H:%M:%S')}")
-
-    data = fetch_market_data()
-
-    if data:
-        # (這裡放原本的戰術分析邏輯與 UI 顯示)
-        st.success(f"0050 目前價：{data['price']:.2f} | 量比：{data['v_ratio']:.2f}x")
+        # 抓取數據 (0050 與 2330)
+        df_0050 = yf.download("0050.TW", period="9mo", interval="1d", session=session)
+        df_2330 = yf.download("2330.TW", period="1mo", interval="1d", session=session)
         
-        # 手動發報按鈕
-        if st.button("🚀 請求戰報發送"):
-            # ... 原本的 Telegram 發送邏輯 ...
-            st.write("戰報已送達！")
+        # 🛡️ 容錯檢查：確保數據非空且長度足夠
+        if df_0050.empty or df_2330.empty:
+            return None
+        if len(df_0050) < 21:
+            return "DATA_INSUFFICIENT"
+
+        # 計算指標
+        close = df_0050['Close'].iloc[-1]
+        ma20 = df_0050['Close'].rolling(20).mean().iloc[-1]
+        ma120 = df_0050['Close'].rolling(120).mean().iloc[-1]
+        n20h = df_0050['High'].rolling(20).max().shift(1).iloc[-1]
+        n10l = df_0050['Low'].rolling(10).min().shift(1).iloc[-1]
+        bias = ((close - ma20) / ma20) * 100
+
+        # 台積電量能比
+        v_curr = df_2330['Volume'].iloc[-1]
+        v5ma = df_2330['Volume'].rolling(5).mean().iloc[-1]
+        v_ratio = v_curr / v5ma
+
+        return {
+            "price": close, "ma20": ma20, "ma120": ma120,
+            "n20h": n20h, "n10l": n10l, "bias": bias,
+            "v_ratio": v_ratio
+        }
+    except Exception as e:
+        st.error(f"⚠️ 雅虎連線受困：{e}")
+        return None
+
+# ==========================================
+# ⚡ 戰術分析邏輯 (V3.1 最終校準)
+# ==========================================
+def run_tactics(s):
+    sig, act, color = "💤 靜默", "等待指標共振", "info"
+    is_climax_16 = s['v_ratio'] > 1.6
+
+    # 1. 多頭判定 (Long)
+    if s['price'] > s['ma20'] and s['price'] >= s['n20h']:
+        if s['v_ratio'] > 1.2 and s['bias'] <= 5.5:
+            sig, act, color = "🔥 FIRE 多單點火", "買進 2 口小 0050 期 (3.5x)\n獲利 >2% 後加碼至 3 口 (6.0x)", "success"
+        elif s['bias'] > 5.5:
+            sig, act = "⚠️ 乖離過高", "目前位置不宜進場，等待月線回靠"
+
+    # 2. 空頭判定 (Short) - 嚴格執行 1.6x 禁令
+    elif s['price'] < s['ma20'] and s['price'] < s['ma120'] and s['price'] <= s['n10l']:
+        if is_climax_16:
+            sig, act, color = "🚫 禁止放空", "台積電量能 > 1.6x，疑有護盤/竭盡，禁止追空", "warning"
+        elif s['v_ratio'] > 1.2:
+            sig, act, color = "💣 ATTACK 空單突擊", "反手放空 2 口小 0050 期 (
