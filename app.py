@@ -56,7 +56,7 @@ def fetch_market_data():
 # 🚀 執行主程序
 # ==========================================
 
-# --- 💰 資金調度室 (左半邊固定顯示區) ---
+# --- 💰 資金調度室 (左半邊) ---
 st.sidebar.title("💰 資金調度室")
 capital = st.sidebar.number_input("總預算 (NTD)", value=1000000, step=100000)
 st.sidebar.divider()
@@ -70,43 +70,43 @@ st.caption(f"偵查頻率：5 分鐘 | 現在時間：{datetime.now().strftime('
 data = fetch_market_data()
 
 if data:
-    # 1. 換算邏輯
+    # 1. 換算與槓桿精算
     contract_value = data['price'] * 1000
     pos_35x = math.floor((capital * 3.5) / contract_value)
     pos_60x = math.floor((capital * 6.0) / contract_value)
     
-    # --- 🧮 側邊欄：新增槓桿資金換算 (首長要求) ---
     st.sidebar.divider()
     st.sidebar.subheader("📉 槓桿所需準備金/口")
-    st.sidebar.write(f"以現價 **{data['price']:.2f}** 計算：")
-    st.sidebar.info(f"**3.5 倍槓桿：**\n每口準備 **{contract_value / 3.5:,.0f}** NTD")
-    st.sidebar.warning(f"**6.0 倍槓桿：**\n每口準備 **{contract_value / 6.0:,.0f}** NTD")
-    st.sidebar.caption("※ 此金額包含保證金與緩衝資金")
+    st.sidebar.info(f"**3.5 倍槓桿：**\n每口需 **{contract_value / 3.5:,.0f}** 元")
+    st.sidebar.warning(f"**6.0 倍槓桿：**\n每口需 **{contract_value / 6.0:,.0f}** 元")
 
     # 2. 趨勢判定
     is_ma20_down = data['ma20'] < data['ma20_prev']
     is_ma20_up = data['ma20'] > data['ma20_prev']
     is_climax_16 = data['v_ratio'] > 1.6
 
-    # 3. 戰術分析邏輯
+    # 3. 戰術分析邏輯 (修正：多頭不必上揚)
     sig, act, color, target_pos = "💤 靜默", "等待指標共振", "info", 0
 
-    if data['price'] > data['ma20'] and is_ma20_up and data['price'] >= data['n20h']:
+    # 多頭：價格 > 20MA 且 站上 20日高點
+    if data['price'] > data['ma20'] and data['price'] >= data['n20h']:
         if data['v_ratio'] > 1.2 and data['bias'] <= 5.5:
             sig, act, color = "🔥 FIRE 多單點火", f"建議建立 {pos_35x} 口，獲利 >2% 後加碼至 {pos_60x} 口", "success"
             target_pos = pos_35x
         elif data['bias'] > 5.5:
             sig, act = "⚠️ 乖離過高", "禁止追多，等待回踩月線"
     
+    # 空頭：價格 < 20MA 且 < 120MA 且 跌破 10日低點 且 月線下彎
     elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
         if is_climax_16:
-            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量，疑有護盤，禁止追空", "warning"
+            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量，禁止追空", "warning"
         elif is_ma20_down and data['v_ratio'] > 1.2:
             sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {pos_35x} 口空單", "error"
             target_pos = pos_35x
         elif not is_ma20_down:
             sig, act = "⏳ 等待月線下彎", "價格已破位，但月線斜率尚未轉負"
 
+    # 出場邏輯
     if data['price'] < data['ma20']:
         sig, act, color = "🛑 RETREAT 撤退", "收盤跌破 20MA 全數平倉", "error"
     if is_climax_16:
@@ -120,22 +120,17 @@ if data:
     c3.metric("台積電量比", f"{data['v_ratio']:.2f}x")
     c4.metric("月線趨勢", "⤴️ 上揚" if is_ma20_up else "⤵️ 下彎")
 
-    sc1, sc2, sc3 = st.columns(3)
-    sc1.caption(f"20MA 乖離率：{data['bias']:.2f}%")
-    sc2.caption(f"20日壓力位 (高點)：{data['n20h']:.2f}")
-    sc3.caption(f"10日支撐位 (低點)：{data['n10l']:.2f}")
-
     st.divider()
     if color == "success": st.success(f"### 指令：{sig}")
     elif color == "warning": st.warning(f"### 指令：{sig}")
     elif color == "error": st.error(f"### 指令：{sig}")
     else: st.info(f"### 指令：{sig}")
-    st.write(f"**建議戰術：** {act}")
+    st.write(f"**建議動作：** {act}")
 
     # 5. 手動發報
     if st.button("🚀 請求發報：同步至手機"):
         async def send_tg():
-            msg = (f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n建議口數：{target_pos} 口\n動作：{act}")
+            msg = (f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n口數：{target_pos} 口\n動作：{act}")
             bot = Bot(token=TOKEN)
             await bot.send_message(chat_id=CHAT_ID, text=msg)
         try:
