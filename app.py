@@ -53,7 +53,6 @@ def fetch_market_data():
 # 🚀 執行主程序
 # ==========================================
 
-# --- 💰 左側側邊欄 (槓桿保證金換算版) ---
 st.sidebar.title("💰 戰術配置室")
 capital = st.sidebar.number_input("總火種 (NTD)", value=30000, min_value=1000, step=10000)
 entry_price_input = st.sidebar.number_input("第一梯隊進場價", value=0.0, step=0.1)
@@ -61,59 +60,52 @@ entry_price_input = st.sidebar.number_input("第一梯隊進場價", value=0.0, 
 data = fetch_market_data()
 
 if data:
-    # 1. 戰術階段與基準保證金計算
+    # 1. 槓桿保證金計算
     contract_value = data['price'] * 1000
-    m_35x = contract_value / 3.5  # 3.5倍實質保證金
-    m_60x = contract_value / 6.0  # 6.0倍實質保證金
+    m_35x = contract_value / 3.5
+    m_60x = contract_value / 6.0
 
-    # 2. 兵力拆分邏輯
+    # 2. 兵力與佔用資本計算
     if capital < 100000:
-        # 第一階段：100% 資金跑 6.0x
         pos_35x = math.floor(capital / m_60x) 
         pos_60x = 0
         used_margin = pos_35x * m_60x
-        tier1_label = "第一梯隊 (6.0x)"
+        tier1_label = "第一階段彈射 (6.0x)"
     else:
-        # 第二、三階段：50% 資金跑對應槓桿
         cap_split = capital * 0.5
         pos_35x = math.floor(cap_split / m_35x)
-        if capital <= 3000000:
-            pos_60x = math.floor(cap_split / m_60x)
-        else:
-            pos_60x = math.floor(cap_split / m_35x)
+        pos_60x = math.floor(cap_split / (m_60x if capital <= 3000000 else m_35x))
         used_margin = pos_35x * m_35x
-        tier1_label = "第一梯隊 (3.5x)"
+        tier1_label = "第一梯隊先遣 (3.5x)"
     
     total_pos = pos_35x + pos_60x
     remaining_margin = capital - used_margin
 
-    # 3. 左側動態顯示 (100% 符合首長需求)
+    # 3. 左側動態顯示 (亮度強化版)
     st.sidebar.markdown(f"""
-    <div style="background-color:#1e1e1e; padding:12px; border-radius:8px; border:1px solid #333; margin-top:10px;">
-        <p style="color:#888; font-size:12px; margin-bottom:2px;">{tier1_label} 佔用資本</p>
-        <p style="color:#fff; font-size:18px; font-weight:bold; margin-bottom:12px;">{used_margin:,.0f} 元</p>
-        <p style="color:#888; font-size:12px; margin-bottom:2px;">🟢 剩餘保證金 (可用資本)</p>
-        <p style="color:#00FF00; font-size:24px; font-weight:bold;">{remaining_margin:,.0f} 元</p>
-        <hr style="border:0.5px solid #333; margin:10px 0;">
-        <p style="color:#555; font-size:11px;">每口 3.5x 基準：{m_35x:,.0f}</p>
-        <p style="color:#555; font-size:11px;">每口 6.0x 基準：{m_60x:,.0f}</p>
+    <div style="background-color:#111111; padding:15px; border-radius:10px; border:2px solid #444; margin-top:10px;">
+        <p style="color:#E0E0E0; font-size:13px; margin-bottom:2px; font-weight:500;">{tier1_label} 佔用資本</p>
+        <p style="color:#FFFFFF; font-size:20px; font-weight:bold; margin-bottom:12px;">{used_margin:,.0f} 元</p>
+        <p style="color:#E0E0E0; font-size:13px; margin-bottom:2px; font-weight:500;">🟢 剩餘保證金 (可用資本)</p>
+        <p style="color:#00FF00; font-size:26px; font-weight:bold;">{remaining_margin:,.0f} 元</p>
+        <hr style="border:0.5px solid #555; margin:12px 0;">
+        <p style="color:#BBBBBB; font-size:11px;">每口 3.5x 基準：{m_35x:,.0f}</p>
+        <p style="color:#BBBBBB; font-size:11px;">每口 6.0x 基準：{m_60x:,.0f}</p>
     </div>
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 📈 右側主畫面 (嚴格鎖定，禁止改動)
+# 📈 右側主畫面 (絕對鎖定，禁止改動)
 # ==========================================
 st.title("🎖️ Trinity V3.1 雲端指揮部")
 st.caption(f"最後更新：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 if data:
-    # 判定邏輯
     is_ma20_up = data['ma20'] > data['ma20_prev']
     is_climax_16 = data['v_ratio'] > 1.6
     target_addon = entry_price_input * 1.02 if entry_price_input > 0 else 0
     is_addon_reached = data['price'] >= target_addon if target_addon > 0 else False
 
-    # 戰術指令
     sig, act, color, icon = "💤 靜默", "等待指標共振", "info", ""
     if data['price'] > data['ma20'] and data['price'] >= data['n20h']:
         if data['v_ratio'] > 1.2 and data['bias'] <= 5.5:
@@ -135,7 +127,6 @@ if data:
         sig, icon, color = "🏳️ 空單熔斷 | 全軍撤退", "🚨🚨🚨", "error"
         act = "【爆量警報】台積電 1.6x 爆量，立即出清所有倉位！"
 
-    # 4. 戰情儀表板
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("0050 目前價", f"{data['price']:.2f}")
@@ -165,7 +156,7 @@ if data:
 
     if st.button("🚀 請求發報：同步至手機"):
         async def send_tg():
-            msg = f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n成本：{entry_price_input:.2f}\n剩餘資本：{remaining_margin:,.0f}"
+            msg = f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n成本：{entry_price_input:.2f}\n可用資本：{remaining_margin:,.0f}"
             bot = Bot(token=TOKEN)
             await bot.send_message(chat_id=CHAT_ID, text=msg)
         loop = asyncio.new_event_loop()
