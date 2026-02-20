@@ -2,42 +2,54 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-st.set_page_config(page_title="Trinity V3.1 絕對指揮部", layout="wide")
-st.title("🎖️ Trinity V3.1 雲端指揮部 [絕對防禦版]")
+# --- 1. 權限驗證系統 ---
+st.set_page_config(page_title="Trinity V3.2 密鑰指揮部", layout="wide")
+
+# 這裡設定您的專屬密碼 (建議修改下方的 "1234")
+MASTER_KEY = "2836" 
+
+st.sidebar.title("🔐 安全驗證")
+user_pwd = st.sidebar.text_input("輸入統帥授權碼", type="password")
+
+if user_pwd != MASTER_KEY:
+    st.title("🎖️ Trinity V3.2 雲端指揮部")
+    st.warning("⚠️ 系統已鎖定。請於左側側邊欄輸入『統帥授權碼』以解除屏蔽。")
+    st.info("副官提醒：未經授權禁止訪問戰略數據。")
+    st.stop() # 密碼錯誤就直接切斷後續運算，保護數據
+
+# --- 2. 核心邏輯 (驗證通過後才會執行) ---
+st.title("🎖️ Trinity V3.2 雲端指揮部 [已授權]")
 
 @st.cache_data(ttl=600)
 def fetch_market_data():
     try:
-        # 抓取稍長一點的區間確保一定有資料
         d050 = yf.download("0050.TW", period="1mo", auto_adjust=True, progress=False)
         d2330 = yf.download("2330.TW", period="1mo", auto_adjust=True, progress=False)
         
         if d050.empty or d2330.empty:
-            return "目前抓不到市場數據，請確認網路或是否為非交易時段。"
+            return "數據真空，請稍後再試。"
 
         if isinstance(d050.columns, pd.MultiIndex):
             d050.columns = d050.columns.get_level_values(0)
         if isinstance(d2330.columns, pd.MultiIndex):
             d2330.columns = d2330.columns.get_level_values(0)
             
-        # --- 防踩空邏輯：確保取到最後一個非空值 ---
         p = float(d050['Close'].dropna().iloc[-1])
         m20 = float(d050['Close'].dropna().rolling(20).mean().iloc[-1])
         nh = float(d050['High'].dropna().rolling(20).max().shift(1).iloc[-1])
-        
-        v_series = d2330['Volume'].dropna()
-        v5ma = float(v_series.tail(5).mean())
-        curr_v = float(v_series.iloc[-1])
+        v5ma = float(d2330['Volume'].dropna().tail(5).mean())
+        curr_v = float(d2330['Volume'].dropna().iloc[-1])
         vr = curr_v / v5ma if v5ma > 0 else 0
-        
         bias = ((p - m20) / m20) * 100
         
         return {"p": p, "m20": m20, "nh": nh, "vr": vr, "bias": bias}
     except Exception as e:
-        return f"數據分析異常：{str(e)}"
+        return f"異常：{str(e)}"
 
-# --- 介面渲染 ---
+# --- 3. 介面渲染 ---
+st.sidebar.markdown("---")
 capital = st.sidebar.number_input("當前總資產 (TWD)", value=30000, step=1000)
+
 res = fetch_market_data()
 
 if isinstance(res, dict):
