@@ -15,7 +15,7 @@ TOKEN = "8137685110:AAFkDozi-FKMrLYJTcbxwb5Q8ishmJDm_u8"
 CHAT_ID = "在此填入您的_CHAT_ID"  
 
 # ==========================================
-# 📊 數據偵查引擎 (5分鐘刷新 + 扁平化處理)
+# 📊 數據偵查引擎 (5分鐘刷新 + 扁平化修正)
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_market_data():
@@ -25,7 +25,7 @@ def fetch_market_data():
         
         if df_0050.empty or df_2330.empty: return None
 
-        # 修正 MultiIndex 
+        # 解決 MultiIndex 導致的 ValueError
         if isinstance(df_0050.columns, pd.MultiIndex):
             df_0050.columns = df_0050.columns.get_level_values(0)
         if isinstance(df_2330.columns, pd.MultiIndex):
@@ -59,9 +59,9 @@ def fetch_market_data():
 st.sidebar.title("💰 資金調度室")
 capital = st.sidebar.number_input("總預算 (NTD)", value=1000000, step=100000)
 st.sidebar.divider()
-st.sidebar.write("**🎯 小 0050 期規格**")
-st.sidebar.write("- 1 點 = 1,000 NTD")
-st.sidebar.write("- 原始保證金 = 4,200 NTD")
+st.sidebar.write("**🎯 規格參考**")
+st.sidebar.write("- 小0050：1 點 = 1,000 NTD")
+st.sidebar.write("- 保證金：4,200 NTD / 口")
 
 st.title("🎖️ Trinity V3.1 雲端指揮部")
 st.caption(f"偵查頻率：5 分鐘 | 現在時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -69,7 +69,7 @@ st.caption(f"偵查頻率：5 分鐘 | 現在時間：{datetime.now().strftime('
 data = fetch_market_data()
 
 if data:
-    # 1. 換算邏輯
+    # 1. 精確換算邏輯 (小 0050: 1點=1000)
     contract_value = data['price'] * 1000
     pos_35x = math.floor((capital * 3.5) / contract_value)
     pos_60x = math.floor((capital * 6.0) / contract_value)
@@ -79,7 +79,7 @@ if data:
     is_ma20_up = data['ma20'] > data['ma20_prev']
     is_climax_16 = data['v_ratio'] > 1.6
 
-    # 3. 戰術分析
+    # 3. 戰術分析邏輯
     sig, act, color, target_pos = "💤 靜默", "等待指標共振", "info", 0
 
     # 多頭判定
@@ -98,36 +98,42 @@ if data:
             sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {pos_35x} 口空單", "error"
             target_pos = pos_35x
         elif not is_ma20_down:
-            sig, act = "⏳ 等待月線下彎", "價格已破位，但月線斜率尚未轉正"
+            sig, act = "⏳ 等待月線下彎", "價格已破位，但月線斜率尚未轉負"
 
     # 出場邏輯
     if data['price'] < data['ma20']:
-        sig, act, color = "🛑 RETREAT 撤退", "跌破 20MA 全數平倉", "error"
+        sig, act, color = "🛑 RETREAT 撤退", "收盤跌破 20MA 全數平倉", "error"
     if is_climax_16:
         sig += " | 🏳️ 空單熔斷"
         act += "\n【警報】1.6x 爆量，空單立即平倉！"
 
-    # 4. 面板顯示 (修正 Line 114)
+    # 4. 戰情儀表板 (修正：補回 0050 目前價)
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("小0050 建議口數", f"{pos_35x} / {pos_60x}")
-    c2.metric("台積電量比", f"{data['v_ratio']:.2f}x")
-    c3.metric("月線趨勢", "⤴️ 上揚" if is_ma20_up else "⤵️ 下彎")
-    c4.metric("20MA 乖離", f"{data['bias']:.1f}%")
+    c1.metric("0050 目前價", f"{data['price']:.2f}") # 👈 重回主位
+    c2.metric("建議口數 (3.5x/6x)", f"{pos_35x} / {pos_60x}")
+    c3.metric("台積電量比", f"{data['v_ratio']:.2f}x")
+    c4.metric("月線趨勢", "⤴️ 上揚" if is_ma20_up else "⤵️ 下彎")
+
+    # 次要指標列
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.caption(f"20MA 乖離率：{data['bias']:.2f}%")
+    sc2.caption(f"20日壓力位 (高點)：{data['n20h']:.2f}")
+    sc3.caption(f"10日支撐位 (低點)：{data['n10l']:.2f}")
 
     st.divider()
     if color == "success": st.success(f"### 指令：{sig}")
     elif color == "warning": st.warning(f"### 指令：{sig}")
-    elif color == "error": st.error(f"### 指立：{sig}")
+    elif color == "error": st.error(f"### 指令：{sig}")
     else: st.info(f"### 指令：{sig}")
-    st.write(f"**建議動作：** {act}")
+    st.write(f"**建議戰術：** {act}")
 
     # 5. 手動發報
-    if st.button("🚀 請求發報"):
+    if st.button("🚀 請求發報：同步至手機"):
         async def send_tg():
             msg = (f"🎖️ Trinity 戰報\n"
                    f"指令：{sig}\n"
-                   f"口數：{target_pos} 口\n"
-                   f"0050價位：{data['price']:.2f}\n"
+                   f"現價：{data['price']:.2f}\n"
+                   f"建議口數：{target_pos} 口\n"
                    f"動作：{act}")
             bot = Bot(token=TOKEN)
             await bot.send_message(chat_id=CHAT_ID, text=msg)
@@ -139,4 +145,4 @@ if data:
         except Exception as e:
             st.error(f"發送失敗：{e}")
 else:
-    st.warning("📡 偵查雷達重啟中，請稍候 5 分鐘...")
+    st.warning("📡 偵查雷達重啟中，請稍候...")
