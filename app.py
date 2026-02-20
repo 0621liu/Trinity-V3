@@ -25,7 +25,7 @@ def fetch_market_data():
         
         if df_0050.empty or df_2330.empty: return None
 
-        # 解決 MultiIndex 導致的 ValueError
+        # 解決 MultiIndex 扁平化
         if isinstance(df_0050.columns, pd.MultiIndex):
             df_0050.columns = df_0050.columns.get_level_values(0)
         if isinstance(df_2330.columns, pd.MultiIndex):
@@ -68,8 +68,8 @@ st.caption(f"偵查頻率：5 分鐘 | 現在時間：{datetime.now().strftime('
 data = fetch_market_data()
 
 if data:
-    # 1. 兵力拆分換算 (50/50 分兵邏輯)
-    contract_val = data['price'] * 1000  # 1點=1000元
+    # 1. 兵力拆分 (50/50 戰法)
+    contract_val = data['price'] * 1000
     cap_split = capital * 0.5
     pos_35x = math.floor((cap_split * 3.5) / contract_val)
     pos_60x = math.floor((cap_split * 6.0) / contract_val)
@@ -80,32 +80,70 @@ if data:
     is_ma20_up = data['ma20'] > data['ma20_prev']
     is_climax_16 = data['v_ratio'] > 1.6
     
-    # 加碼點監測 (+2%)
     target_addon = entry_price * 1.02 if entry_price > 0 else 0
     is_addon_reached = data['price'] >= target_addon if target_addon > 0 else False
 
     # 3. 戰術指令判定
     sig, act, color, alert_icon = "💤 靜默", "等待指標共振", "info", ""
 
-    # 多頭：價格 > 20MA 且 突破 20日高點
+    # 多頭核心 (價格>MA20 且 突破20日高點)
     if data['price'] > data['ma20'] and data['price'] >= data['n20h']:
         if data['v_ratio'] > 1.2 and data['bias'] <= 5.5:
-            sig, act, color = "🔥 FIRE 多單點火", f"第一梯隊 {pos_35x} 口已進場" if entry_price > 0 else f"建議進場第一梯隊 {pos_35x} 口", "success"
+            sig, color = "🔥 FIRE 多單點火", "success"
+            act = f"建議進場第一梯隊 {pos_35x} 口" if entry_price == 0 else f"第一梯隊 {pos_35x} 口已在陣中"
             if is_addon_reached:
                 sig = "🚀 FIRE 全力進攻"
-                act = f"已達加碼點 {target_addon:.2f}，投入剩餘 {pos_60x} 口 (總規模 {total_pos} 口)"
+                act = f"已達加碼點 {target_addon:.2f}，投入剩餘 {pos_60x} 口"
         elif data['bias'] > 5.5:
             sig, act, color = "⚠️ 乖離過熱", "禁止追多，等待回踩月線", "warning"
     
-    # 空頭：價格 < 20MA 且 < 120MA 且 跌破 10日低點 且 月線下彎
+    # 空頭核心 (價格<MA20 且 <MA120 且 破10日低 且 月線下彎)
     elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
         if is_climax_16:
-            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量，疑有護盤", "warning"
+            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量避險中", "warning"
         elif is_ma20_down and data['v_ratio'] > 1.2:
-            sig, act, color = "💣 ATTACK 空單突擊", f"建議總規模 {total_pos} 口", "error"
+            sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {total_pos} 口空單 (分兩批: {pos_35x}+{pos_60x})", "error"
         elif not is_ma20_down:
-            sig, act = "⏳ 等待月線下彎", "價格破位但月線斜率未轉負"
+            sig, act = "⏳ 等待下彎", "價格破位但月線斜率未轉負"
 
-    # 同步撤退指令
+    # 同步撤退機制 (只要破20MA不論多空全撤)
     if data['price'] < data['ma20']:
-        sig
+        sig, act, color, alert_icon = "🛑 RETREAT 撤退", "跌破 20MA，全軍同步清倉！", "error", "🚨"
+    
+    # 台積電熔斷
+    if is_climax_16:
+        sig = "🏳️ 空單熔斷 | 撤退"
+        act += "\n【警報】1.6x 爆量，不論多空立即撤退！"
+        color, alert_icon = "error", "🚨"
+
+    # 4. 戰情儀表板佈局
+    c1, c2, c3, c4 = st.columns(4)
+    
+    with c1:
+        st.metric("0050 目前價", f"{data['price']:.2f}")
+        if entry_price > 0:
+            st.caption(f"成本: {entry_price:.2f} | 加碼: {target_addon:.2f}")
+        else:
+            st.caption("成本: 未設定")
+
+    with c2:
+        st.metric("建議總口數", f"{total_pos}")
+        st.caption(f"3.5x:{pos_35x} | 6x:{pos_60x} | {capital/10000:.0f}萬")
+    
+    with c3:
+        v_total_str = f"{data['v_curr'] / 1000:,.0f} K"
+        st.metric("台積電量比", f"{data['v_ratio']:.2f}x", f"總量: {v_total_str}")
+    
+    with c4:
+        # 乖離率顏色邏輯
+        bias_color = "red" if data['bias'] > 5.5 else ("#00FF00" if data['bias'] < -5.5 else "white")
+        st.write(f"月線: {data['ma20']:.2f} ({'⤴️' if is_ma20_up else '⤵️'})")
+        st.markdown(f"乖離率: <span style='color:{bias_color}; font-weight:bold;'>{data['bias']:.2f}%</span>", unsafe_content_type=True)
+
+    st.divider()
+    
+    # 指令顯示區
+    display_sig = f"{alert_icon} {sig} {alert_icon}" if alert_icon else sig
+    if color == "success": st.success(f"### 指令：{display_sig}")
+    elif color == "warning": st.warning(f"### 指令：{display_sig}")
+    elif color == "error": st.error(f"### 指令：
