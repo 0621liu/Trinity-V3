@@ -15,7 +15,7 @@ TOKEN = "8137685110:AAFkDozi-FKMrLYJTcbxwb5Q8ishmJDm_u8"
 CHAT_ID = "在此填入您的_CHAT_ID"  
 
 # ==========================================
-# 📊 數據偵查引擎
+# 📊 數據偵查引擎 (5分鐘刷新 + 扁平化處理)
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_market_data():
@@ -25,7 +25,7 @@ def fetch_market_data():
         
         if df_0050.empty or df_2330.empty: return None
 
-        # 修正 MultiIndex
+        # 修正 MultiIndex 
         if isinstance(df_0050.columns, pd.MultiIndex):
             df_0050.columns = df_0050.columns.get_level_values(0)
         if isinstance(df_2330.columns, pd.MultiIndex):
@@ -54,7 +54,7 @@ def fetch_market_data():
         return None
 
 # ==========================================
-# 🚀 執行主程序 (無密碼版)
+# 🚀 執行主程序
 # ==========================================
 st.sidebar.title("💰 資金調度室")
 capital = st.sidebar.number_input("總預算 (NTD)", value=1000000, step=100000)
@@ -90,15 +90,15 @@ if data:
         elif data['bias'] > 5.5:
             sig, act = "⚠️ 乖離過高", "禁止追多，等待回踩月線"
     
-    # 空頭判定 (修正第 104 行 Syntax)
+    # 空頭判定
     elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
         if is_climax_16:
-            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量避險，禁止追空", "warning"
+            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量，疑有護盤，禁止追空", "warning"
         elif is_ma20_down and data['v_ratio'] > 1.2:
             sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {pos_35x} 口空單", "error"
             target_pos = pos_35x
         elif not is_ma20_down:
-            sig, act = "⏳ 等待月線下彎", "價格已破位，但月線斜率尚未轉負"
+            sig, act = "⏳ 等待月線下彎", "價格已破位，但月線斜率尚未轉正"
 
     # 出場邏輯
     if data['price'] < data['ma20']:
@@ -107,8 +107,36 @@ if data:
         sig += " | 🏳️ 空單熔斷"
         act += "\n【警報】1.6x 爆量，空單立即平倉！"
 
-    # 4. 面板顯示
+    # 4. 面板顯示 (修正 Line 114)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("小0050 建議口數", f"{pos_35x} / {pos_60x}")
     c2.metric("台積電量比", f"{data['v_ratio']:.2f}x")
-    c3.
+    c3.metric("月線趨勢", "⤴️ 上揚" if is_ma20_up else "⤵️ 下彎")
+    c4.metric("20MA 乖離", f"{data['bias']:.1f}%")
+
+    st.divider()
+    if color == "success": st.success(f"### 指令：{sig}")
+    elif color == "warning": st.warning(f"### 指令：{sig}")
+    elif color == "error": st.error(f"### 指立：{sig}")
+    else: st.info(f"### 指令：{sig}")
+    st.write(f"**建議動作：** {act}")
+
+    # 5. 手動發報
+    if st.button("🚀 請求發報"):
+        async def send_tg():
+            msg = (f"🎖️ Trinity 戰報\n"
+                   f"指令：{sig}\n"
+                   f"口數：{target_pos} 口\n"
+                   f"0050價位：{data['price']:.2f}\n"
+                   f"動作：{act}")
+            bot = Bot(token=TOKEN)
+            await bot.send_message(chat_id=CHAT_ID, text=msg)
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(send_tg())
+            st.success("✅ 戰報已送達！")
+        except Exception as e:
+            st.error(f"發送失敗：{e}")
+else:
+    st.warning("📡 偵查雷達重啟中，請稍候 5 分鐘...")
