@@ -87,9 +87,9 @@ def run_tactics(s):
         elif s['bias'] > 5.5:
             sig, act = "⚠️ 乖離過高", "目前位置不宜進場，等待月線回靠"
 
-    # 2. 空頭判定 (Short) - 嚴格執行 1.6x 禁令
-    elif s['price'] < s['ma20'] and s['price'] < s['ma120'] and s['price'] <= s['n10l']:
-        if is_climax_16:
-            sig, act, color = "🚫 禁止放空", "台積電量能 > 1.6x，疑有護盤/竭盡，禁止追空", "warning"
-        elif s['v_ratio'] > 1.2:
-            sig, act, color = "💣 ATTACK 空單突擊", "反手放空 2 口小 0050 期 (
+   # --- 修正後的空頭判定區塊 ---
+        elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
+            if is_climax_16:
+                sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量，疑有護盤，禁止追空", "warning"
+            elif data['v_ratio'] > 1.2:
+                sig, act, color = "💣 ATTACK 空單突擊", "反手放空 2 口小 0050 期 (3.5x)", "error"
