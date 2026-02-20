@@ -23,7 +23,7 @@ def check_password():
         st.title("🎖️ Trinity 系統：身份驗證")
         pwd = st.text_input("請輸入授權密碼", type="password")
         if st.button("登入系統"):
-            if pwd == COMMAND_PASSWORD:2836
+            if pwd == COMMAND_PASSWORD:
                 st.session_state["password_correct"] = True
                 if hasattr(st, "rerun"): st.rerun()
                 else: st.experimental_rerun()
