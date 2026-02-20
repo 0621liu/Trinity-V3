@@ -17,7 +17,7 @@ CHAT_ID = "在此填入您的_CHAT_ID"
 @st.cache_data(ttl=300)
 def fetch_market_data():
     try:
-        # 抓取數據：0050 需要 120MA，2330 需要 5 日均量
+        # 抓取數據：0050 需要 120MA，2330 需要現價與均量
         df_0050 = yf.download("0050.TW", period="1y", interval="1d")
         df_2330 = yf.download("2330.TW", period="1mo", interval="1d")
         if df_0050.empty or df_2330.empty: return None
@@ -27,6 +27,7 @@ def fetch_market_data():
         if isinstance(df_2330.columns, pd.MultiIndex):
             df_2330.columns = df_2330.columns.get_level_values(0)
 
+        # 基礎指標計算
         close = float(df_0050['Close'].iloc[-1])
         ma20_series = df_0050['Close'].rolling(20).mean()
         ma20 = float(ma20_series.iloc[-1])
@@ -38,14 +39,17 @@ def fetch_market_data():
         n10l = float(df_0050['Low'].rolling(10).min().shift(1).iloc[-1])
         
         bias = ((close - ma20) / ma20) * 100
+        
+        # 台積電數據
         v_curr = float(df_2330['Volume'].iloc[-1])
+        v_price = float(df_2330['Close'].iloc[-1])  # 新增：2330現價
         v5ma = float(df_2330['Volume'].rolling(5).mean().iloc[-1])
         v_ratio = v_curr / v5ma
 
         return {
             "price": close, "ma20": ma20, "ma20_prev": ma20_prev,
             "ma120": ma120, "n20h": n20h, "n10l": n10l,
-            "bias": bias, "v_ratio": v_ratio, "v_curr": v_curr
+            "bias": bias, "v_ratio": v_ratio, "v_curr": v_curr, "v_price": v_price
         }
     except Exception as e:
         st.error(f"⚠️ 偵查受阻：{e}")
@@ -55,7 +59,7 @@ def fetch_market_data():
 # 🚀 執行主程序
 # ==========================================
 
-# --- 💰 側邊欄控制區 (完全維持原樣) ---
+# --- 💰 側邊欄控制區 (嚴格維持原樣) ---
 st.sidebar.title("💰 戰術配置室")
 capital = st.sidebar.number_input("總火種 (NTD)", value=1000000, min_value=1000, step=100000)
 entry_price = st.sidebar.number_input("第一梯隊進場價", value=0.0, step=0.1)
@@ -66,15 +70,14 @@ st.caption(f"最後更新：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 data = fetch_market_data()
 
 if data:
-    # 1. 兵力拆分 (還原首長 50% / 50% 換算)
+    # 1. 兵力拆分 (嚴格維持首長 50% / 50% 換算)
     c_val = data['price'] * 1000
     cap_split = capital * 0.5
     pos_35x = math.floor((cap_split * 3.5) / c_val)
     pos_60x = math.floor((cap_split * 6.0) / c_val)
     total_pos = pos_35x + pos_60x
 
-    # 2. 判定邏輯 (導入 V8.C 3.1 規格)
-    is_ma20_down = data['ma20'] < data['ma20_prev']
+    # 2. 判定邏輯 (規格書 3.1 導入)
     is_ma20_up = data['ma20'] > data['ma20_prev']
     is_climax_16 = data['v_ratio'] > 1.6
     target_addon = entry_price * 1.02 if entry_price > 0 else 0
@@ -83,7 +86,7 @@ if data:
     # 3. 戰術指令
     sig, act, color, icon = "💤 靜默", "等待指標共振", "info", ""
 
-    # 多頭 (Long)
+    # 多頭 (Long) 條件
     if data['price'] > data['ma20'] and data['price'] >= data['n20h']:
         if data['v_ratio'] > 1.2 and data['bias'] <= 5.5:
             sig, color = "🔥 FIRE 多單點火", "success"
@@ -93,14 +96,14 @@ if data:
         elif data['bias'] > 5.5:
             sig, act, color = "⚠️ 乖離過熱", "禁止追多，等待回踩月線", "warning"
     
-    # 空頭 (Short)
+    # 空頭 (Short) 條件
     elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
         if is_climax_16:
             sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量護盤", "warning"
         elif data['v_ratio'] > 1.2:
             sig, act, color = "💣 ATTACK 空單突擊", f"反手建立 {total_pos} 口空單 ({pos_35x}+{pos_60x})", "error"
 
-    # 🚨 同步撤退與熔斷 (優先權最高)
+    # 🚨 出場與熔斷 (優先權最高)
     if data['price'] < data['ma20']:
         sig, act, color, icon = "🛑 RETREAT 撤退", "跌破 20MA，不論盈虧全軍撤退！", "error", "🚨🚨🚨"
     
@@ -109,7 +112,7 @@ if data:
         act = "【爆量警報】台積電 1.6x 爆量，立即出清所有倉位！"
         color = "error"
 
-    # 4. 戰情儀表板 (視覺強化區 - 完全維持原代碼結構)
+    # 4. 戰情儀表板 (視覺強化區)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("0050 目前價", f"{data['price']:.2f}")
@@ -125,9 +128,10 @@ if data:
     with c3:
         v_total = f"{data['v_curr'] / 1000:,.0f} K"
         st.metric("台積電量比", f"{data['v_ratio']:.2f}x", f"總量: {v_total}")
+        # 新增：在均量下方加入股價
+        st.markdown(f"<p style='color:black; font-size:16px; font-weight:bold;'>2330股價: {data['v_price']:.1f}</p>", unsafe_allow_html=True)
     
     with c4:
-        # 修復 ternary operator 語法錯誤
         b_clr = "red" if data['bias'] > 5.5 else ("#00FF00" if data['bias'] < -5.5 else "white")
         st.write(f"月線: {data['ma20']:.2f} ({'⤴️' if is_ma20_up else '⤵️'})")
         st.markdown(f"乖離率: <span style='color:{b_clr}; font-weight:bold; font-size:20px;'>{data['bias']:.2f}%</span>", unsafe_allow_html=True)
@@ -142,7 +146,7 @@ if data:
     else: st.info(f"### 指令：{d_sig}")
     st.write(f"**建議動作：**\n{act}")
 
-    # 5. 手動發報 (完全維持原樣)
+    # 5. 手動發報 (維持原樣)
     if st.button("🚀 請求發報：同步至手機"):
         async def send_tg():
             msg = f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n成本：{entry_price:.2f}\n加碼：{target_addon:.2f}\n口數：{total_pos} ({pos_35x}+{pos_60x})\n動作：{act}"
