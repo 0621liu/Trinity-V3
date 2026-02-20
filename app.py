@@ -12,7 +12,7 @@ st.set_page_config(page_title="Trinity V3.1 指揮部", layout="wide")
 
 TOKEN = "8137685110:AAFkDozi-FKMrLYJTcbxwb5Q8ishmJDm_u8"
 CHAT_ID = "在此填入您的_CHAT_ID"  
-COMMAND_PASSWORD = "在此設定您的指揮官密碼" 
+COMMAND_PASSWORD = "2836" 
 
 def check_password():
     if "password_correct" not in st.session_state:
@@ -148,3 +148,4 @@ if check_password():
                 st.success("✅ 戰報已送達！")
             except Exception as e:
                 st.error(f"發送失敗：{e}")
+
