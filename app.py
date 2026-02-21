@@ -4,18 +4,17 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-# --- 1. 介面設定 ---
+# --- 1. 介面設定 (完全鎖定佈局) ---
 st.set_page_config(page_title="Trinity V3.1 雲端指揮部", layout="wide")
 st.title("🎖️ Trinity V8.C 3.1 戰術終端")
 
-# --- 2. 左側側邊欄 (完全還原版) ---
+# --- 2. 左側側邊欄 (還原純粹版) ---
 st.sidebar.header("⚙️ 戰術參數配置")
 with st.sidebar.expander("💰 彈藥庫", expanded=True):
     init_cap = st.number_input("起始本金", value=30000)
     monthly_add = st.number_input("每月補給", value=10000)
 
-# 🚨 補回：首長提到的缺失內容 (黑色/深色背景框)
-st.sidebar.info(f"系統狀態：後關稅時代模式 (2026/02/21)")
+# 僅保留首長要求的核心警示框
 st.sidebar.warning("⚡ 戰術核心：僅依據線、價、量執行，排除一切外部干擾。")
 
 # --- 3. 數據抓取 ---
@@ -39,7 +38,7 @@ def get_battle_data():
 
 df = get_battle_data()
 
-# --- 4. 戰場模擬 (校準版) ---
+# --- 4. 戰場模擬 (V8.C 3.1 邏輯) ---
 def run_simulation(df, capital, monthly_add):
     cap = float(capital)
     tai_zuo_fund = 0.0
@@ -89,12 +88,12 @@ def run_simulation(df, capital, monthly_add):
 
 logs_df, final_cap, final_wife = run_simulation(df, init_cap, monthly_add)
 
-# --- 5. 右側主介面 (數據呈現) ---
+# --- 5. 右側主介面 ---
 st.divider()
-c1, c2, c3 = st.columns(3)
+c1, col2, col3 = st.columns(3)
 c1.metric("⚔️ 戰鬥餘額", f"${int(final_cap):,}")
-c2.metric("🏠 安太座金庫", f"${int(final_wife):,}")
-c3.metric("📈 總資產", f"${int(final_cap + final_wife):,}")
+col2.metric("🏠 安太座金庫", f"${int(final_wife):,}")
+col3.metric("📈 總資產", f"${int(final_cap + final_wife):,}")
 
 st.subheader("📜 歷史戰報")
 st.dataframe(logs_df, use_container_width=True)
