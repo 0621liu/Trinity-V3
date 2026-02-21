@@ -81,7 +81,7 @@ if data:
     total_pos = pos_35x + pos_60x
     remaining_margin = capital - used_margin
 
-    # 3. 左側動態顯示 (亮度強化版)
+    # 3. 左側動態顯示 (絕對鎖定 UI)
     st.sidebar.markdown(f"""
     <div style="background-color:#111111; padding:15px; border-radius:10px; border:2px solid #444; margin-top:10px;">
         <p style="color:#E0E0E0; font-size:13px; margin-bottom:2px; font-weight:500;">{tier1_label} 佔用資本</p>
@@ -107,6 +107,8 @@ if data:
     is_addon_reached = data['price'] >= target_addon if target_addon > 0 else False
 
     sig, act, color, icon = "💤 靜默", "等待指標共振", "info", ""
+    
+    # --- 校準後邏輯：多頭判定 ---
     if data['price'] > data['ma20'] and data['price'] >= data['n20h']:
         if data['v_ratio'] > 1.2 and data['bias'] <= 5.5:
             sig, color = "🔥 FIRE 多單點火", "success"
@@ -115,17 +117,25 @@ if data:
                 sig, act = "🚀 FIRE 全力進攻", f"已達 2% 加碼位 {target_addon:.2f}，投入剩餘 {pos_60x} 口"
         elif data['bias'] > 5.5:
             sig, act, color = "⚠️ 乖離過熱", "禁止追多，等待回踩月線", "warning"
+            
+    # --- 校準後邏輯：空頭判定 ---
     elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
         if is_climax_16:
-            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量護盤", "warning"
+            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量護盤 (熔斷禁區)", "warning"
+        elif data['bias'] < -5.5: # 新增：空單 -5.5% 乖離限制
+            sig, act, color = "⚠️ 乖離過大", "低於 -5.5% 禁區，禁止追空", "warning"
         elif data['v_ratio'] > 1.2:
             sig, act, color = "💣 ATTACK 空單突擊", f"反手建立空單 ({pos_35x}+{pos_60x})", "error"
 
+    # --- 校準後邏輯：出場判定 ---
+    # 多單：跌破 20MA
     if data['price'] < data['ma20']:
-        sig, act, color, icon = "🛑 RETREAT 撤退", "跌破 20MA，不論盈虧全軍撤退！", "error", "🚨🚨🚨"
+        sig, act, color, icon = "🛑 RETREAT 撤退", "跌破 20MA，多單全軍撤退！", "error", "🚨🚨🚨"
+    
+    # 空單：1.6x 爆量優先撤退，優先於 20MA
     if is_climax_16:
         sig, icon, color = "🏳️ 空單熔斷 | 全軍撤退", "🚨🚨🚨", "error"
-        act = "【爆量警報】台積電 1.6x 爆量，立即出清所有倉位！"
+        act = "【爆量警報】台積電 1.6x 爆量，空單立即清倉，多單暫緩進場！"
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -142,6 +152,7 @@ if data:
         st.metric("台積電量比", f"{data['v_ratio']:.2f}x", f"總量: {v_total}")
         st.markdown(f"<p style='color:black; font-size:16px; font-weight:bold;'>2330股價: {data['v_price']:.1f}</p>", unsafe_allow_html=True)
     with c4:
+        # UI 顏色維持首長設定
         b_clr = "red" if data['bias'] > 5.5 else ("#00FF00" if data['bias'] < -5.5 else "white")
         st.write(f"月線: {data['ma20']:.2f} ({'⤴️' if is_ma20_up else '⤵️'})")
         st.markdown(f"乖離率: <span style='color:{b_clr}; font-weight:bold; font-size:20px;'>{data['bias']:.2f}%</span>", unsafe_allow_html=True)
