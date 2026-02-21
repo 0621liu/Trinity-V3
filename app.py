@@ -1,167 +1,121 @@
-import streamlit as st
 import yfinance as yf
 import pandas as pd
-import asyncio
-from telegram import Bot
-from datetime import datetime
-import math
+import numpy as np
 
-# ==========================================
-# 🎖️ 指揮部最高配置 - 嚴格執行規格書 3.1 邏輯
-# ==========================================
-st.set_page_config(page_title="Trinity V3.1 指揮部", layout="wide")
+def run_trinity_v8c_31_unrealized():
+    print("📡 啟動 Trinity V8.C 3.1：2020-2026 全紀錄 (校準版：安太座機制 + 雙向乖離限制)")
 
-TOKEN = "8137685110:AAFkDozi-FKMrLYJTcbxwb5Q8ishmJDm_u8"
-CHAT_ID = "在此填入您的_CHAT_ID"  
+    # 1. 數據下載
+    start_d, end_d = "2019-06-01", "2026-02-21"
+    s50 = yf.download("0050.TW", start=start_d, end=end_d, auto_adjust=True)
+    s2330 = yf.download("2330.TW", start=start_d, end=end_d, auto_adjust=True)
 
-@st.cache_data(ttl=300)
-def fetch_market_data():
-    try:
-        df_0050 = yf.download("0050.TW", period="1y", interval="1d")
-        df_2330 = yf.download("2330.TW", period="1mo", interval="1d")
-        if df_0050.empty or df_2330.empty: return None
+    if isinstance(s50.columns, pd.MultiIndex): s50.columns = s50.columns.get_level_values(0)
+    if isinstance(s2330.columns, pd.MultiIndex): s2330.columns = s2330.columns.get_level_values(0)
 
-        if isinstance(df_0050.columns, pd.MultiIndex):
-            df_0050.columns = df_0050.columns.get_level_values(0)
-        if isinstance(df_2330.columns, pd.MultiIndex):
-            df_2330.columns = df_2330.columns.get_level_values(0)
+    df = pd.DataFrame(index=s50.index)
+    df['0050_C'], df['0050_H'], df['0050_L'] = s50['Close'], s50['High'], s50['Low']
+    df['2330_V'] = s2330['Volume']
 
-        close = float(df_0050['Close'].iloc[-1])
-        ma20_series = df_0050['Close'].rolling(20).mean()
-        ma20 = float(ma20_series.iloc[-1])
-        ma20_prev = float(ma20_series.iloc[-2])
-        ma120 = float(df_0050['Close'].rolling(120).mean().iloc[-1])
-        n20h = float(df_0050['High'].rolling(20).max().shift(1).iloc[-1])
-        n10l = float(df_0050['Low'].rolling(10).min().shift(1).iloc[-1])
-        bias = ((close - ma20) / ma20) * 100
-        
-        v_curr = float(df_2330['Volume'].iloc[-1])
-        v_price = float(df_2330['Close'].iloc[-1])
-        v5ma = float(df_2330['Volume'].rolling(5).mean().iloc[-1])
-        v_ratio = v_curr / v5ma
+    # 2. 指標計算
+    df['20MA'] = df['0050_C'].rolling(20).mean()
+    df['120MA'] = df['0050_C'].rolling(120).mean()
+    df['N20_H'] = df['0050_H'].shift(1).rolling(20).max()
+    df['N10_L'] = df['0050_L'].shift(1).rolling(10).min()
+    df['V5MA_2330'] = df['2330_V'].rolling(5).mean()
+    df['Bias_20MA'] = (df['0050_C'] - df['20MA']) / df['20MA']
+    df = df.ffill().dropna()
 
-        return {
-            "price": close, "ma20": ma20, "ma20_prev": ma20_prev,
-            "ma120": ma120, "n20h": n20h, "n10l": n10l,
-            "bias": bias, "v_ratio": v_ratio, "v_curr": v_curr, "v_price": v_price
-        }
-    except Exception as e:
-        st.error(f"⚠️ 偵查受阻：{e}")
-        return None
+    # 3. 戰略參數
+    test_start = '2020-01-01'
+    capital = 30000.0
+    total_invested = capital
+    tai_zuo_fund = 0.0  # 重新命名：安太座金庫
+    withdrawn = False
 
-# ==========================================
-# 🚀 執行主程序
-# ==========================================
+    pos, entry_p, add_p, entry_date = 0, 0.0, 0.0, None
+    last_m, is_full = -1, False
+    lev1, lev2 = 0.0, 0.0
+    logs = []
 
-st.sidebar.title("💰 戰術配置室")
-capital = st.sidebar.number_input("總火種 (NTD)", value=30000, min_value=1000, step=10000)
-entry_price_input = st.sidebar.number_input("第一梯隊進場價", value=0.0, step=0.1)
+    # 4. 戰場迴圈
+    for date, row in df.loc[test_start:].iterrows():
+        if date.month != last_m:
+            capital += 10000.0; total_invested += 10000.0; last_m = date.month
 
-data = fetch_market_data()
+        if capital >= 1000000 and not withdrawn:
+            tai_zuo_fund = total_invested; capital -= tai_zuo_fund; withdrawn = True
+            logs.append({'進場日期': date.date(), '出場日期': '-', '方向': '💎', '進場價': '-', '出場價': '-', '報酬率': '-', '資產': int(capital), '備註': f'安太座抽回 {int(tai_zuo_fund):,}'})
 
-if data:
-    # 1. 槓桿保證金計算
-    contract_value = data['price'] * 1000
-    m_35x = contract_value / 3.5
-    m_60x = contract_value / 6.0
+        p, ma20, v_ratio = row['0050_C'], row['20MA'], row['2330_V'] / row['V5MA_2330']
+        total_wealth = capital + tai_zuo_fund
 
-    # 2. 兵力與佔用資本計算
-    if capital < 100000:
-        pos_35x = math.floor(capital / m_60x) 
-        pos_60x = 0
-        used_margin = pos_35x * m_60x
-        tier1_label = "第一階段彈射 (6.0x)"
-    else:
-        cap_split = capital * 0.5
-        pos_35x = math.floor(cap_split / m_35x)
-        pos_60x = math.floor(cap_split / (m_60x if capital <= 3000000 else m_35x))
-        used_margin = pos_35x * m_35x
-        tier1_label = "第一梯隊先遣 (3.5x)"
-    
-    total_pos = pos_35x + pos_60x
-    remaining_margin = capital - used_margin
+        if pos != 0:
+            if not is_full:
+                move = (p - entry_p)/entry_p if pos == 1 else (entry_p - p)/entry_p
+                if move >= 0.02: is_full = True; add_p = p
 
-    # 3. 左側動態顯示 (亮度強化版)
-    st.sidebar.markdown(f"""
-    <div style="background-color:#111111; padding:15px; border-radius:10px; border:2px solid #444; margin-top:10px;">
-        <p style="color:#E0E0E0; font-size:13px; margin-bottom:2px; font-weight:500;">{tier1_label} 佔用資本</p>
-        <p style="color:#FFFFFF; font-size:20px; font-weight:bold; margin-bottom:12px;">{used_margin:,.0f} 元</p>
-        <p style="color:#E0E0E0; font-size:13px; margin-bottom:2px; font-weight:500;">🟢 剩餘保證金 (可用資本)</p>
-        <p style="color:#00FF00; font-size:26px; font-weight:bold;">{remaining_margin:,.0f} 元</p>
-        <hr style="border:0.5px solid #555; margin:12px 0;">
-        <p style="color:#BBBBBB; font-size:11px;">每口 3.5x 基準：{m_35x:,.0f}</p>
-        <p style="color:#BBBBBB; font-size:11px;">每口 6.0x 基準：{m_60x:,.0f}</p>
-    </div>
-    """, unsafe_allow_html=True)
+            exit_f = False
+            # 多單標準：跌破 20MA
+            if pos == 1 and row['0050_C'] < ma20: exit_f = True
+            # 空單標準：1.6x 優先觸發，或 20MA 站回
+            if pos == -1:
+                if v_ratio > 1.6 or row['0050_C'] > ma20: exit_f = True
+            
+            if exit_f:
+                exit_price = p
+                if total_wealth < 100000:
+                    total_roi = (exit_price - entry_p) / entry_p * lev1 * pos
+                else:
+                    roi1 = (exit_price - entry_p) / entry_p * lev1 * 0.5 * pos
+                    actual_add_p = add_p if is_full else p
+                    roi2 = (exit_price - actual_add_p) / actual_add_p * lev2 * 0.5 * pos
+                    total_roi = roi1 + (roi2 if is_full else 0)
 
-# ==========================================
-# 📈 右側主畫面 (絕對鎖定，禁止改動)
-# ==========================================
-st.title("🎖️ Trinity V3.1 雲端指揮部")
-st.caption(f"最後更新：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                capital += (capital * total_roi)
+                logs.append({
+                    '進場日期': entry_date.date(), '出場日期': date.date(),
+                    '方向': '多' if pos==1 else '空', '進場價': round(entry_p, 2),
+                    '出場價': round(exit_price, 2), '報酬率': f"{round(total_roi*100, 2)}%",
+                    '資產': int(capital), '備註': '1.6x熔斷' if (pos==-1 and v_ratio > 1.6) else ''
+                })
+                pos, is_full = 0, False
 
-if data:
-    is_ma20_up = data['ma20'] > data['ma20_prev']
-    is_climax_16 = data['v_ratio'] > 1.6
-    target_addon = entry_price_input * 1.02 if entry_price_input > 0 else 0
-    is_addon_reached = data['price'] >= target_addon if target_addon > 0 else False
+        if pos == 0:
+            vol_f = v_ratio > 1.2
+            # 多單判定
+            if p > ma20 and p >= row['N20_H'] and vol_f and row['Bias_20MA'] <= 0.055:
+                pos, entry_p, entry_date = 1, p, date
+                if total_wealth < 100000: lev1, lev2, is_full, add_p = 6.0, 6.0, True, p
+                elif total_wealth < 3000000: lev1, lev2, is_full = 3.5, 6.0, False
+                else: lev1, lev2, is_full = 3.5, 3.5, False
+            
+            # 空單判定 (同步校準：包含 Bias >= -5.5%)
+            elif p < ma20 and p < row['120MA'] and p <= row['N10_L'] and vol_f and v_ratio <= 1.6 and row['Bias_20MA'] >= -0.055:
+                pos, entry_p, entry_date = -1, p, date
+                if total_wealth < 100000: lev1, lev2, is_full, add_p = 6.0, 6.0, True, p
+                elif total_wealth < 3000000: lev1, lev2, is_full = 3.5, 6.0, False
+                else: lev1, lev2, is_full = 3.5, 3.5, False
 
-    sig, act, color, icon = "💤 靜默", "等待指標共振", "info", ""
-    if data['price'] > data['ma20'] and data['price'] >= data['n20h']:
-        if data['v_ratio'] > 1.2 and data['bias'] <= 5.5:
-            sig, color = "🔥 FIRE 多單點火", "success"
-            act = f"進場第一梯隊 {pos_35x} 口" if entry_price_input == 0 else "第一梯隊已進場，等待加碼位"
-            if is_addon_reached:
-                sig, act = "🚀 FIRE 全力進攻", f"已達 2% 加碼位 {target_addon:.2f}，投入剩餘 {pos_60x} 口"
-        elif data['bias'] > 5.5:
-            sig, act, color = "⚠️ 乖離過熱", "禁止追多，等待回踩月線", "warning"
-    elif data['price'] < data['ma20'] and data['price'] < data['ma120'] and data['price'] <= data['n10l']:
-        if is_climax_16:
-            sig, act, color = "🚫 禁止放空", "台積電 1.6x 爆量護盤", "warning"
-        elif data['v_ratio'] > 1.2:
-            sig, act, color = "💣 ATTACK 空單突擊", f"反手建立空單 ({pos_35x}+{pos_60x})", "error"
-
-    if data['price'] < data['ma20']:
-        sig, act, color, icon = "🛑 RETREAT 撤退", "跌破 20MA，不論盈虧全軍撤退！", "error", "🚨🚨🚨"
-    if is_climax_16:
-        sig, icon, color = "🏳️ 空單熔斷 | 全軍撤退", "🚨🚨🚨", "error"
-        act = "【爆量警報】台積電 1.6x 爆量，立即出清所有倉位！"
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("0050 目前價", f"{data['price']:.2f}")
-        if entry_price_input > 0:
-            st.markdown(f"<p style='color:black; font-size:18px; font-weight:bold;'>成本: {entry_price_input:.2f} | 加碼: {target_addon:.2f}</p>", unsafe_allow_html=True)
+    # 4.5 捕捉未平倉部位
+    if pos != 0:
+        last_row = df.iloc[-1]
+        last_p = last_row['0050_C']
+        if total_wealth < 100000:
+            unrealized_roi = (last_p - entry_p) / entry_p * lev1 * pos
         else:
-            st.markdown("<p style='color:#555; font-size:16px;'>成本: 未設定</p>", unsafe_allow_html=True)
-    with c2:
-        st.metric("建議總口數", f"{total_pos} 口")
-        st.markdown(f"<p style='color:black; font-size:16px; font-weight:bold;'>3.5x: {pos_35x}口 | 6x: {pos_60x}口</p>", unsafe_allow_html=True)
-    with c3:
-        v_total = f"{data['v_curr'] / 1000:,.0f} K"
-        st.metric("台積電量比", f"{data['v_ratio']:.2f}x", f"總量: {v_total}")
-        st.markdown(f"<p style='color:black; font-size:16px; font-weight:bold;'>2330股價: {data['v_price']:.1f}</p>", unsafe_allow_html=True)
-    with c4:
-        b_clr = "red" if data['bias'] > 5.5 else ("#00FF00" if data['bias'] < -5.5 else "white")
-        st.write(f"月線: {data['ma20']:.2f} ({'⤴️' if is_ma20_up else '⤵️'})")
-        st.markdown(f"乖離率: <span style='color:{b_clr}; font-weight:bold; font-size:20px;'>{data['bias']:.2f}%</span>", unsafe_allow_html=True)
+            ur1 = (last_p - entry_p) / entry_p * lev1 * 0.5 * pos
+            actual_add_p = add_p if is_full else last_p
+            ur2 = (last_p - actual_add_p) / actual_add_p * lev2 * 0.5 * pos
+            unrealized_roi = ur1 + (ur2 if is_full else 0)
+        
+        capital_with_float = capital + (capital * unrealized_roi)
+        logs.append({
+            '進場日期': entry_date.date(), '出場日期': '持有中',
+            '方向': '多' if pos==1 else '空', '進場價': round(entry_p, 2),
+            '出場價': round(last_p, 2), '報酬率': f"{round(unrealized_roi*100, 2)}%",
+            '資產': int(capital_with_float), '備註': '🚩 未平倉部位 (現價估值)'
+        })
 
-    st.divider()
-    d_sig = f"{icon} {sig} {icon}" if icon else sig
-    if color == "success": st.success(f"### 指令：{d_sig}")
-    elif color == "warning": st.warning(f"### 指令：{d_sig}")
-    elif color == "error": st.error(f"### 指令：{d_sig}")
-    else: st.info(f"### 指令：{d_sig}")
-    st.write(f"**建議動作：**\n{act}")
-
-    if st.button("🚀 請求發報：同步至手機"):
-        async def send_tg():
-            msg = f"🎖️ Trinity 戰報\n指令：{sig}\n現價：{data['price']:.2f}\n成本：{entry_price_input:.2f}\n可用資本：{remaining_margin:,.0f}"
-            bot = Bot(token=TOKEN)
-            await bot.send_message(chat_id=CHAT_ID, text=msg)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(send_tg())
-        st.success("✅ 戰報已送達！")
-else:
-    st.warning("📡 偵查雷達重啟中...")
+    res = pd.DataFrame(logs)
+    return res
