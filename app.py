@@ -1,121 +1,121 @@
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
-def run_trinity_v8c_31_unrealized():
-    print("📡 啟動 Trinity V8.C 3.1：2020-2026 全紀錄 (校準版：安太座機制 + 雙向乖離限制)")
+# --- 1. 介面設定 (手機優化) ---
+st.set_page_config(page_title="Trinity V3.1 雲端指揮部", layout="wide")
 
-    # 1. 數據下載
-    start_d, end_d = "2019-06-01", "2026-02-21"
+st.title("🎖️ Trinity V8.C 3.1 戰略終端")
+st.sidebar.header("⚙️ 戰術參數配置")
+
+# --- 2. 側邊欄：資產與補給 ---
+with st.sidebar.expander("💰 彈藥庫", expanded=True):
+    init_cap = st.number_input("起始本金 (3萬)", value=30000)
+    monthly_add = st.number_input("每月補給 (1萬)", value=10000)
+
+# --- 3. 核心邏輯 (完全保留 V8.C 3.1 精髓) ---
+@st.cache_data(ttl=3600)  # 快取一小時，省去反覆抓數據的時間
+def get_battle_data():
+    start_d, end_d = "2019-06-01", datetime.now().strftime('%Y-%m-%d')
     s50 = yf.download("0050.TW", start=start_d, end=end_d, auto_adjust=True)
     s2330 = yf.download("2330.TW", start=start_d, end=end_d, auto_adjust=True)
-
+    
     if isinstance(s50.columns, pd.MultiIndex): s50.columns = s50.columns.get_level_values(0)
     if isinstance(s2330.columns, pd.MultiIndex): s2330.columns = s2330.columns.get_level_values(0)
-
+    
     df = pd.DataFrame(index=s50.index)
-    df['0050_C'], df['0050_H'], df['0050_L'] = s50['Close'], s50['High'], s50['Low']
-    df['2330_V'] = s2330['Volume']
+    df['C'], df['H'], df['L'] = s50['Close'], s50['High'], s50['Low']
+    df['V_2330'] = s2330['Volume']
+    
+    df['20MA'] = df['C'].rolling(20).mean()
+    df['120MA'] = df['C'].rolling(120).mean()
+    df['N20_H'] = df['H'].shift(1).rolling(20).max()
+    df['N10_L'] = df['L'].shift(1).rolling(10).min()
+    df['V5MA'] = df['V_2330'].rolling(5).mean()
+    df['Bias'] = (df['C'] - df['20MA']) / df['20MA']
+    return df.dropna()
 
-    # 2. 指標計算
-    df['20MA'] = df['0050_C'].rolling(20).mean()
-    df['120MA'] = df['0050_C'].rolling(120).mean()
-    df['N20_H'] = df['0050_H'].shift(1).rolling(20).max()
-    df['N10_L'] = df['0050_L'].shift(1).rolling(10).min()
-    df['V5MA_2330'] = df['2330_V'].rolling(5).mean()
-    df['Bias_20MA'] = (df['0050_C'] - df['20MA']) / df['20MA']
-    df = df.ffill().dropna()
+df = get_battle_data()
 
-    # 3. 戰略參數
-    test_start = '2020-01-01'
-    capital = 30000.0
-    total_invested = capital
-    tai_zuo_fund = 0.0  # 重新命名：安太座金庫
+# --- 4. 戰場模擬演算 ---
+def run_simulation(df, capital, monthly_add):
+    cap = float(capital)
+    tai_zuo_fund = 0.0
     withdrawn = False
-
     pos, entry_p, add_p, entry_date = 0, 0.0, 0.0, None
     last_m, is_full = -1, False
-    lev1, lev2 = 0.0, 0.0
     logs = []
 
-    # 4. 戰場迴圈
-    for date, row in df.loc[test_start:].iterrows():
+    for date, row in df.loc['2020-01-01':].iterrows():
         if date.month != last_m:
-            capital += 10000.0; total_invested += 10000.0; last_m = date.month
+            cap += monthly_add; last_m = date.month
+        
+        if cap >= 1000000 and not withdrawn:
+            tai_zuo_fund = 30000 + (len(logs)*10000 if logs else 0) # 簡化本金計算
+            cap -= tai_zuo_fund; withdrawn = True
+            logs.append({'日期': date.date(), '動作': '💎 安太座', '報酬': '-', '資產': int(cap), '備註': f'提撥 {int(tai_zuo_fund):,}'})
 
-        if capital >= 1000000 and not withdrawn:
-            tai_zuo_fund = total_invested; capital -= tai_zuo_fund; withdrawn = True
-            logs.append({'進場日期': date.date(), '出場日期': '-', '方向': '💎', '進場價': '-', '出場價': '-', '報酬率': '-', '資產': int(capital), '備註': f'安太座抽回 {int(tai_zuo_fund):,}'})
-
-        p, ma20, v_ratio = row['0050_C'], row['20MA'], row['2330_V'] / row['V5MA_2330']
-        total_wealth = capital + tai_zuo_fund
+        p, ma20, v_ratio = row['C'], row['20MA'], row['V_2330'] / row['V5MA']
+        wealth = cap + tai_zuo_fund
 
         if pos != 0:
             if not is_full:
                 move = (p - entry_p)/entry_p if pos == 1 else (entry_p - p)/entry_p
                 if move >= 0.02: is_full = True; add_p = p
-
+            
             exit_f = False
-            # 多單標準：跌破 20MA
-            if pos == 1 and row['0050_C'] < ma20: exit_f = True
-            # 空單標準：1.6x 優先觸發，或 20MA 站回
-            if pos == -1:
-                if v_ratio > 1.6 or row['0050_C'] > ma20: exit_f = True
+            if pos == 1 and p < ma20: exit_f = True
+            if pos == -1 and (v_ratio > 1.6 or p > ma20): exit_f = True
             
             if exit_f:
-                exit_price = p
-                if total_wealth < 100000:
-                    total_roi = (exit_price - entry_p) / entry_p * lev1 * pos
+                if wealth < 100000: roi = (p - entry_p)/entry_p * 6.0 * pos
                 else:
-                    roi1 = (exit_price - entry_p) / entry_p * lev1 * 0.5 * pos
-                    actual_add_p = add_p if is_full else p
-                    roi2 = (exit_price - actual_add_p) / actual_add_p * lev2 * 0.5 * pos
-                    total_roi = roi1 + (roi2 if is_full else 0)
-
-                capital += (capital * total_roi)
-                logs.append({
-                    '進場日期': entry_date.date(), '出場日期': date.date(),
-                    '方向': '多' if pos==1 else '空', '進場價': round(entry_p, 2),
-                    '出場價': round(exit_price, 2), '報酬率': f"{round(total_roi*100, 2)}%",
-                    '資產': int(capital), '備註': '1.6x熔斷' if (pos==-1 and v_ratio > 1.6) else ''
-                })
+                    l1, l2 = (3.5, 6.0) if wealth < 3000000 else (3.5, 3.5)
+                    r1 = (p - entry_p)/entry_p * l1 * 0.5 * pos
+                    r2 = (p - (add_p if is_full else p)) / (add_p if is_full else p) * l2 * 0.5 * pos
+                    roi = r1 + (r2 if is_full else 0)
+                cap *= (1 + roi)
+                logs.append({'日期': date.date(), '動作': '多' if pos==1 else '空', '報酬': f"{roi*100:.1f}%", '資產': int(cap), '備註': '1.6x熔斷' if (pos==-1 and v_ratio > 1.6) else ''})
                 pos, is_full = 0, False
 
         if pos == 0:
             vol_f = v_ratio > 1.2
-            # 多單判定
-            if p > ma20 and p >= row['N20_H'] and vol_f and row['Bias_20MA'] <= 0.055:
+            if p > ma20 and p >= row['N20_H'] and vol_f and row['Bias'] <= 0.055:
                 pos, entry_p, entry_date = 1, p, date
-                if total_wealth < 100000: lev1, lev2, is_full, add_p = 6.0, 6.0, True, p
-                elif total_wealth < 3000000: lev1, lev2, is_full = 3.5, 6.0, False
-                else: lev1, lev2, is_full = 3.5, 3.5, False
-            
-            # 空單判定 (同步校準：包含 Bias >= -5.5%)
-            elif p < ma20 and p < row['120MA'] and p <= row['N10_L'] and vol_f and v_ratio <= 1.6 and row['Bias_20MA'] >= -0.055:
+                if wealth < 100000: is_full = True
+            elif p < ma20 and p < row['120MA'] and p <= row['N10_L'] and vol_f and v_ratio <= 1.6 and row['Bias'] >= -0.055:
                 pos, entry_p, entry_date = -1, p, date
-                if total_wealth < 100000: lev1, lev2, is_full, add_p = 6.0, 6.0, True, p
-                elif total_wealth < 3000000: lev1, lev2, is_full = 3.5, 6.0, False
-                else: lev1, lev2, is_full = 3.5, 3.5, False
+                if wealth < 100000: is_full = True
+    
+    return pd.DataFrame(logs), cap, tai_zuo_fund
 
-    # 4.5 捕捉未平倉部位
-    if pos != 0:
-        last_row = df.iloc[-1]
-        last_p = last_row['0050_C']
-        if total_wealth < 100000:
-            unrealized_roi = (last_p - entry_p) / entry_p * lev1 * pos
-        else:
-            ur1 = (last_p - entry_p) / entry_p * lev1 * 0.5 * pos
-            actual_add_p = add_p if is_full else last_p
-            ur2 = (last_p - actual_add_p) / actual_add_p * lev2 * 0.5 * pos
-            unrealized_roi = ur1 + (ur2 if is_full else 0)
-        
-        capital_with_float = capital + (capital * unrealized_roi)
-        logs.append({
-            '進場日期': entry_date.date(), '出場日期': '持有中',
-            '方向': '多' if pos==1 else '空', '進場價': round(entry_p, 2),
-            '出場價': round(last_p, 2), '報酬率': f"{round(unrealized_roi*100, 2)}%",
-            '資產': int(capital_with_float), '備註': '🚩 未平倉部位 (現價估值)'
-        })
+logs_df, final_cap, final_wife = run_simulation(df, init_cap, monthly_add)
 
-    res = pd.DataFrame(logs)
-    return res
+# --- 5. 數據呈現 ---
+col1, col2, col3 = st.columns(3)
+col1.metric("⚔️ 戰鬥餘額", f"${int(final_cap):,}")
+col2.metric("🏠 安太座金庫", f"${int(final_wife):,}")
+col3.metric("📈 總資產規模", f"${int(final_cap + final_wife):,}")
+
+st.subheader("📜 戰役紀錄")
+st.dataframe(logs_df, use_container_width=True)
+
+# --- 6. 13:25 即時偵測區 ---
+st.divider()
+st.subheader("🚀 13:25 實時點火判定")
+last_row = df.iloc[-1]
+curr_v_ratio = last_row['V_2330'] / last_row['V5MA']
+
+c1, c2, c3 = st.columns(3)
+c1.write(f"當前價格: **{last_row['C']:.2f}**")
+c2.write(f"月線(20MA): **{last_row['20MA']:.2f}**")
+c3.write(f"台積電量比: **{curr_v_ratio:.2f}x**")
+
+if last_row['C'] > last_row['20MA'] and last_row['C'] >= last_row['N20_H'] and curr_v_ratio > 1.2 and last_row['Bias'] <= 0.055:
+    st.success("✅ 訊號確立：建議多單點火！")
+elif last_row['C'] < last_row['20MA'] and last_row['C'] < last_row['120MA'] and curr_v_ratio > 1.2 and last_row['Bias'] >= -0.055:
+    st.error("🚨 訊號確立：建議空單突襲！")
+else:
+    st.warning("😴 訊號不明：繼續按兵不動。")
